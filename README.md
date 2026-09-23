@@ -201,6 +201,17 @@ LLM не участвует в расчёте: движок, обоснован�
 | NVIDIA NIM | `LLM_BASE_URL=https://integrate.api.nvidia.com/v1`, `LLM_MODEL=meta/llama-3.3-70b-instruct` | пилот, есть кредиты |
 | OpenAI | `LLM_BASE_URL=https://api.openai.com/v1`, `LLM_MODEL=gpt-4.1-mini` | если разрешено политикой |
 | Без LLM | `DEMO_MODE=true` | всегда доступно |
+| **Проверено на демо:** своя модель в vLLM на NVIDIA L40S | `LLM_BASE_URL=http://<сервер>:8000/v1`, `LLM_MODEL=qwen2.5-14b-instruct` | так работал ассистент на демо 23.09 |
+
+Как подняли свою модель (один GPU-сервер NVIDIA L40S 48 ГБ, облако NVIDIA Brev; подойдёт любой сервер с GPU от 40 ГБ и Docker):
+
+```bash
+docker run -d --name llm --gpus all --ipc=host -p 8000:8000 -v ~/hf:/root/.cache/huggingface \
+  vllm/vllm-openai:v0.10.1.1 --model Qwen/Qwen2.5-14B-Instruct --served-model-name qwen2.5-14b-instruct \
+  --api-key <ключ> --enable-auto-tool-choice --tool-call-parser hermes --max-model-len 32768
+```
+
+Замеры 23.09: модель занимает 27,6 ГБ видеопамяти, веса скачиваются и загружаются примерно за 5 минут, ответ ассистента с вызовом инструмента 3–10 с, утренняя сводка 12 с. Код не менялся, только `.env`.
 
 Ассистент получает только агрегаты по позиции (прогноз, остаток, обоснование), а не транзакции и не данные клиентов.
 
@@ -230,7 +241,7 @@ LLM не участвует в расчёте: движок, обоснован�
 | Backend | Python, FastAPI, Uvicorn | 3.12 / 0.115 / 0.34 |
 | Расчёт | pandas, numpy | 2.2 / 2.2 |
 | Экспорт | openpyxl | 3.1 |
-| LLM (опционально) | OpenAI API `gpt-4.1-mini` через OpenAI-совместимый клиент; NVIDIA NIM как альтернатива | openai-python 1.59 |
+| LLM (опционально) | Qwen2.5-14B-Instruct в vLLM на NVIDIA L40S (демо) или OpenAI API `gpt-4.1-mini`, через OpenAI-совместимый клиент; NVIDIA NIM как альтернатива | openai-python 1.59, vLLM 0.10.1.1 |
 | Frontend | React, TypeScript, Vite, Tailwind CSS | 19 / 5.8 / 6 / 4 |
 | Тесты | pytest | 8 |
 | Деплой | Docker Compose, Nginx | v2 / alpine |

@@ -30,6 +30,9 @@
 | OpenAI API (gpt-4.1-mini) | генерация и tool calling |
 | OpenAI API (text-embedding-3-small) | эмбеддинги для поиска по документам |
 | NVIDIA NIM (опционально) | альтернативный провайдер |
+| Qwen2.5-14B-Instruct (Alibaba Qwen, Apache 2.0) | модель ассистента на демо: генерация и tool calling, веса с Hugging Face без дообучения |
+| vLLM 0.10.1.1 (Apache 2.0), образ `vllm/vllm-openai` | OpenAI-совместимый сервер для своей модели |
+| NVIDIA Brev (GPU L40S 48 ГБ) | арендованный GPU-сервер для модели на демо (бонус хакатона) |
 
 ## Данные
 
