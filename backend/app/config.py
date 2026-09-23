@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4.1-mini"
     llm_temperature: float = 0.2
     llm_max_tool_rounds: int = 8
+    llm_timeout_s: float = 60.0  # one model call; the chat never waits longer, it falls back to the tool results
+    llm_max_tokens: int = 1200  # cap on one answer, so a model cannot spend minutes re-typing a long tool result
 
     # DEMO_MODE=true makes the app work without any API key (canned answers) so
     # reviewers can always run the main scenario.

@@ -21,7 +21,8 @@ ToolFn = Callable[..., Any | Awaitable[Any]]
 _TOOLS: dict[str, dict[str, Any]] = {}
 
 
-def tool(description: str, parameters: dict[str, Any] | None = None, label: str | None = None, summarize: Callable[[Any], str] | None = None):
+def tool(description: str, parameters: dict[str, Any] | None = None, label: str | None = None, summarize: Callable[[Any], str] | None = None,
+         final: Callable[[dict], str] | None = None):
     """Register a python function as an LLM tool.
 
     parameters: JSON schema for the arguments. If omitted, a simple schema is
@@ -39,6 +40,7 @@ def tool(description: str, parameters: dict[str, Any] | None = None, label: str 
             "fn": fn,
             "label": label or fn.__name__,
             "summarize": summarize,
+            "final": final,  # renders the answer from the result directly: no second model pass (exact text, seconds not minutes)
             "spec": {
                 "type": "function",
                 "function": {"name": fn.__name__, "description": description, "parameters": schema},
@@ -70,7 +72,34 @@ def tool_specs() -> list[dict[str, Any]]:
 
 def _client() -> AsyncOpenAI:
     s = get_settings()
-    return AsyncOpenAI(api_key=s.llm_api_key or "missing", base_url=s.llm_base_url)
+    return AsyncOpenAI(api_key=s.llm_api_key or "missing", base_url=s.llm_base_url, timeout=s.llm_timeout_s, max_retries=0)
+
+
+MAX_TOOL_CHARS = 6000  # what the model sees of one tool result; the UI still gets the full step
+
+
+def _for_model(out: str) -> str:
+    return out if len(out) <= MAX_TOOL_CHARS else out[:MAX_TOOL_CHARS] + f"… [обрезано: всего {len(out)} символов]"
+
+
+def _fallback(e: Exception, last: tuple[str, str] | None) -> str:
+    """Answer built from the tool results when the model fails or times out: the user still gets the facts."""
+    head = "Модель не ответила вовремя." if "Timeout" in type(e).__name__ else f"LLM недоступен ({type(e).__name__})."
+    if last:
+        name, out = last
+        entry = _TOOLS.get(name, {})
+        try:
+            d = json.loads(out)
+        except Exception:  # noqa: BLE001
+            d = {}
+        if isinstance(d, dict) and d.get("draft"):
+            return f"{head} Черновик от инструмента, без правок модели:\n\n{d['draft']}\n\n{d.get('note', '')}"
+        if isinstance(d, dict) and not d.get("error") and entry.get("summarize"):
+            try:
+                return f"{head} Результат шага «{entry.get('label', name)}»: {entry['summarize'](d)}."
+            except Exception:  # noqa: BLE001
+                pass
+    return f"{head} Расчёт, заказы и экспорт работают без LLM; повторите вопрос или включите DEMO_MODE=true."
 
 
 async def _call_tool(name: str, raw_args: str) -> str:
@@ -128,6 +157,7 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
 
     client = _client()
     specs = tool_specs()
+    last: tuple[str, str] | None = None
     for _ in range(s.llm_max_tool_rounds):
         try:
             resp = await client.chat.completions.create(
@@ -135,10 +165,11 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
                 messages=history,
                 temperature=s.llm_temperature,
                 tools=specs or None,
+                max_tokens=s.llm_max_tokens,
             )
-        except Exception as e:  # noqa: BLE001 — never turn an LLM outage into a 500
+        except Exception as e:  # noqa: BLE001 — never turn an LLM outage or timeout into a 500 or an endless «думает…»
             log.exception("LLM call failed")
-            return {"answer": f"LLM недоступен ({type(e).__name__}). Включите DEMO_MODE=true или проверьте LLM_API_KEY. Расчёт и экспорт работают без LLM.", "steps": steps, "messages": history}
+            return {"answer": _fallback(e, last), "steps": steps, "messages": history}
         msg = resp.choices[0].message
         # clean, provider-neutral assistant message (OpenAI, NVIDIA NIM, vLLM all accept this shape)
         am: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
@@ -147,8 +178,26 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
         history.append(am)
         if not msg.tool_calls:
             return {"answer": msg.content or "", "steps": steps, "messages": history}
+        round_outs: list[tuple[str, str]] = []
         for tc in msg.tool_calls:
             out = await _call_tool(tc.function.name, tc.function.arguments)
+            round_outs.append((tc.function.name, out))
             steps.append(make_step(tc.function.name, tc.function.arguments, out))
-            history.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+            last = (tc.function.name, out)
+            history.append({"role": "tool", "tool_call_id": tc.id, "content": _for_model(out)})
+        finals = []
+        for name, full in round_outs:
+            render = _TOOLS.get(name, {}).get("final")
+            try:
+                d = json.loads(full) if render else None
+            except Exception:  # noqa: BLE001 — not JSON: let the model answer
+                d = None
+            if not render or not isinstance(d, dict) or d.get("error"):
+                finals = []
+                break
+            finals.append(render(d))
+        if finals:
+            answer = "\n\n".join(finals)
+            history.append({"role": "assistant", "content": answer})
+            return {"answer": answer, "steps": steps, "messages": history}
     return {"answer": "Reached max tool rounds.", "steps": steps, "messages": history}
