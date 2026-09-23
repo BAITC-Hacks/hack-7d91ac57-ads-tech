@@ -51,6 +51,14 @@ Base URL в dev: `/api` (Vite проксирует на `http://localhost:8000`)
  "note":"...","top":[{"sku":"KBL-001","name":"...","supplier":"...","naive_qty":900,"recommended_qty":600,"diff_qty":300,"diff_money":150000,"reason":"выброс|дефицит|сезон/тренд/страховой"}]}
 ```
 
+## Вход и администрирование (17:00)
+Все `/api/*`, кроме `/api/health` и `/api/auth/login`, требуют `Authorization: Bearer <token>` (для ссылок скачивания допускается `?token=`).
+- `POST /api/auth/login` `{username, password}` → `{token, user:{username, role, name, role_label}}`; `GET /api/auth/me`; `POST /api/auth/logout`.
+- Только администратор: `GET /api/admin/integrations`, `PUT /api/admin/integrations/{onec|bitrix24}`, `POST /api/admin/integrations/{onec|bitrix24|llm}/test`, `GET /api/admin/audit?user=&action=&limit=`, `GET /api/admin/audit.csv`, `GET|PUT /api/admin/news-settings`.
+- Агент сигналов продаж: `POST /api/signals/import` (multipart `files[]`, `text`, `channel`), `POST /api/signals/import_sample`, `GET /api/signals`, `DELETE /api/signals`. Параметр расчёта `include_signals`; в строках заказа `signal_qty`, `signals_included`, `signals[]`.
+- Агент мониторинга СМИ: `POST /api/news/refresh`, `GET /api/news` (`items[]` с 14 полями, `fields[]`).
+- Шаги агентов: `{tool, label, summary, args, result, ms}` — `label` и `summary` человеческим языком.
+
 ## GET /api/backtest
 Бэктест вне выборки (после старта считается в фоне и кэшируется на диск; до готовности 202 `{"status":"computing"}`). `{warehouse, labels, models, validation:{…}, test:{cutoff, months, skus_evaluated, regular_skus, regular_vs_clean:{model:{wape,bias}}, regular_vs_raw, intermittent_vs_clean, wins_regular, calibration:{target_pct, coverage_raw_pct, multiplier, multiplier_from_previous_window, coverage_out_of_sample_pct}}, production:{model, ss_multiplier, skus_with_error}, note}`. Параметр расчёта `ss_calibrated` (bool, по умолчанию true) в `POST /api/replenish/run`; в строках заказа `forecast_wape`, `forecast_confidence`, `ss_multiplier`, `forecast_model`.
 

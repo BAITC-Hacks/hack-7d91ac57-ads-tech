@@ -27,7 +27,7 @@ const TOUR_STEPS: TourStep[] = [
   { sel: "[data-tour=calib]", title: "Калибровка страхового запаса", text: "Бэктест показал, что классическая формула обещает 95 %, а даёт 81 %. С калибровкой обещание выполняется, но заказ больше. Решение за вами." },
   { sel: "[data-tour=run]", title: "Рассчитать", text: "Одна кнопка: очистка разовых заказов, восстановление спроса в дефиците, сезонность, тренд, страховой запас, кратность и MOQ.", action: "run" },
   { sel: "[data-tour=stats]", title: "Сводка", text: "Сколько позиций заказать, сколько критичных, на какую сумму, насколько точен прогноз и сколько лишнего лежит на складе." },
-  { sel: "[data-tour=tabs]", title: "Разделы", text: "Заказы, точность прогноза, избытки, сравнение с Excel и тренды категорий. Главная работа во вкладке «Заказы»." },
+  { sel: "[data-tour=tabs]", title: "Разделы", text: "Заказы, сигналы продаж из чатов менеджеров, рынок и СМИ, точность прогноза, избытки, сравнение с Excel и тренды. Главная работа во вкладке «Заказы»." },
   { sel: "[data-tour=orders] tbody tr:first-child", title: "Строка заказа", text: "Остаток и товар в пути, прогноз в день с точкой надёжности, дни покрытия и дата, до которой нужно заказать." },
   { sel: "[data-tour=orders] tbody tr:first-child input", title: "Количество можно поправить", text: "Рекомендацию можно изменить вручную: сервис подсветит правку и покажет исходное число." },
   { sel: "[data-tour=orders] tbody tr:first-child td:last-child button", title: "Почему столько?", text: "Обоснование каждой цифры: прогноз, сезонность, исключённые разовые продажи, упущенный спрос, запас. Клик по артикулу откроет график и «что если»." },
@@ -269,10 +269,10 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
     ["orders", "Заказы", result ? fmt(result.summary.positions) : null],
     ["signals", "Сигналы продаж", null],
     ["news", "Рынок и СМИ", null],
-    ["accuracy", "Точность прогноза", wapeOurs != null ? `${fmt(wapeOurs, 1)} %` : null],
+    ["accuracy", "Точность", wapeOurs != null ? `${fmt(wapeOurs, 1)} %` : null],
     ["overstock", "Избытки", over ? fmt(over.overstock_positions + over.dead_positions) : null],
     ["impact", "Против Excel", null],
-    ["trends", "Тренды категорий", null],
+    ["trends", "Тренды", null],
   ];
 
   return (
