@@ -237,6 +237,22 @@ export const api = {
 export const fmt = (n: number | null | undefined, digits = 0) =>
   n === null || n === undefined || Number.isNaN(n) ? "—" : n.toLocaleString("ru-RU", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 
+export const fmtMoney = (n: number | null | undefined) => {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return `${(n / 1e9).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} млрд ₸`;
+  if (a >= 1e6) return `${(n / 1e6).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} млн ₸`;
+  return `${n.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₸`;
+};
+
+export const CONFIDENCE_DOT: Record<string, string> = {
+  высокая: "bg-emerald-500",
+  средняя: "bg-amber-400",
+  низкая: "bg-red-400",
+  "штучный спрос": "bg-zinc-300",
+  "нет данных": "bg-zinc-200",
+};
+
 export const URGENCY_LABEL: Record<Urgency, string> = { critical: "Критично", high: "Высокая", normal: "Плановая", none: "Не нужен" };
 export const URGENCY_CLASS: Record<Urgency, string> = {
   critical: "bg-red-100 text-red-800 ring-red-200",

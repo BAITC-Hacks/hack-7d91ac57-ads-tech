@@ -22,6 +22,12 @@ def resolve_sku(raw: str) -> str | None:
     return str(hit["sku"].iloc[0]) if not hit.empty else None
 
 
+def _wh(warehouse: str | None) -> str:
+    """Known warehouse or the default one: LLMs sometimes invent names («Главный», «основной»)."""
+    ds = state.get_ds()
+    return warehouse if warehouse in set(ds.stock["warehouse"].unique()) else ds.default_warehouse()
+
+
 def _strip(r: dict) -> dict:
     keep = ["sku", "name", "category", "warehouse", "supplier", "supplier_id", "recommended_qty", "urgency", "days_of_cover",
             "lead_time_days", "stock", "in_transit", "forecast_daily", "forecast_period_qty", "safety_stock", "seasonal_factor",
@@ -31,10 +37,10 @@ def _strip(r: dict) -> dict:
 
 @tool(
     "Запустить расчёт рекомендованных заказов поставщикам. Возвращает сводку и позиции по поставщикам.",
-    {"type": "object", "properties": {"warehouse": {"type": "string", "description": "склад, по умолчанию Главный"}, "category": {"type": "string"}}, "required": []},
+    {"type": "object", "properties": {"warehouse": {"type": "string", "description": "склад; не указывай, если пользователь не назвал склад"}, "category": {"type": "string"}}, "required": []},
 )
 def run_replenishment(warehouse: str | None = None, category: str | None = None) -> dict:
-    res = state.ensure_result(Params(warehouse=warehouse or state.get_ds().default_warehouse(), category=category or None))
+    res = state.ensure_result(Params(warehouse=_wh(warehouse), category=category or None))
     return {"summary": res["summary"], "suppliers": [{"supplier": s["supplier"], "supplier_id": s["supplier_id"], "positions": s["positions"], "total_qty": s["total_qty"], "critical": s["critical"]} for s in res["suppliers"]]}
 
 
@@ -44,7 +50,7 @@ def run_replenishment(warehouse: str | None = None, category: str | None = None)
 )
 def explain_sku(sku: str, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
-    warehouse = warehouse or ds.default_warehouse()
+    warehouse = _wh(warehouse)
     found = resolve_sku(sku)
     if not found:
         return {"error": f"артикул {sku} не найден; коды 1С имеют вид 010300016_ (с подчёркиванием) или LMP-006"}
@@ -69,7 +75,7 @@ def list_orders(supplier: str | None = None, urgency: str | None = None, warehou
     if urgency:
         rows = [r for r in rows if r["urgency"] == urgency]
     if warehouse:
-        rows = [r for r in rows if r["warehouse"] == warehouse]
+        rows = [r for r in rows if r["warehouse"] == _wh(warehouse)]
     return {"count": len(rows), "orders": [_strip(r) for r in rows[:limit]]}
 
 
@@ -79,7 +85,7 @@ def list_orders(supplier: str | None = None, urgency: str | None = None, warehou
 )
 def what_if(sku: str, in_transit: float | None = None, stock: float | None = None, lead_time_days: int | None = None, service_level: float | None = None, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
-    warehouse = warehouse or ds.default_warehouse()
+    warehouse = _wh(warehouse)
     found = resolve_sku(sku)
     if not found:
         return {"error": f"артикул {sku} не найден; коды 1С имеют вид 010300016_ (с подчёркиванием)"}

@@ -70,8 +70,12 @@ class RagStore:
             {"id": start + i, "source": source, "text": c, "meta": meta or {}} for i, c in enumerate(chunks)
         )
         if self._use_embeddings() and chunks:
-            new = await self._embed(chunks)
-            self.vecs = new if self.vecs is None else np.vstack([self.vecs, new])
+            try:
+                new = await self._embed(chunks)
+                self.vecs = new if self.vecs is None else np.vstack([self.vecs, new])
+            except Exception:  # noqa: BLE001 — provider without /embeddings (e.g. self-hosted vLLM chat model)
+                log.warning("embeddings unavailable, falling back to keyword search", exc_info=True)
+                self.vecs = None
         else:
             self.vecs = None  # keyword mode
         self._save()
@@ -80,10 +84,14 @@ class RagStore:
     async def search(self, query: str, k: int = 5) -> list[dict[str, Any]]:
         if not self.docs:
             return []
+        scores = None
         if self._use_embeddings() and self.vecs is not None and len(self.vecs) == len(self.docs):
-            q = (await self._embed([query]))[0]
-            scores = self.vecs @ q
-        else:
+            try:
+                q = (await self._embed([query]))[0]
+                scores = self.vecs @ q
+            except Exception:  # noqa: BLE001
+                log.warning("embeddings unavailable, falling back to keyword search", exc_info=True)
+        if scores is None:
             scores = np.array([_keyword_score(query, d["text"]) for d in self.docs], dtype=np.float32)
         idx = np.argsort(-scores)[:k]
         return [{**self.docs[i], "score": float(scores[i])} for i in idx if scores[i] > 0]
