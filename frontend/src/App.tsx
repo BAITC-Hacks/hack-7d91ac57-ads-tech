@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, fmt, type CategoryTrends, type DailyBrief, type Health, type Impact, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
+import { api, fmt, type Backtest, type CategoryTrends, type DailyBrief, type Health, type Impact, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
@@ -12,6 +12,9 @@ export default function App() {
   const [serviceLevel, setServiceLevel] = useState<string>("");
   const [reviewDays, setReviewDays] = useState<number>(14);
   const [growthPlan, setGrowthPlan] = useState<string>("");
+  const [ssCalibrated, setSsCalibrated] = useState(true);
+  const [bt, setBt] = useState<Backtest | null>(null);
+  const [showBt, setShowBt] = useState(true);
   const [over, setOver] = useState<Overstock | null>(null);
   const [showOver, setShowOver] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -82,13 +85,14 @@ export default function App() {
     setRunning(true);
     setRunErr(null);
     try {
-      const r = await api.run({ warehouse: warehouse || null, category: category || null, service_level: serviceLevel ? Number(serviceLevel) : null, review_days: reviewDays, growth_plan_pct_year: growthPlan ? Number(growthPlan) : null });
+      const r = await api.run({ warehouse: warehouse || null, category: category || null, service_level: serviceLevel ? Number(serviceLevel) : null, review_days: reviewDays, growth_plan_pct_year: growthPlan ? Number(growthPlan) : null, ss_calibrated: ssCalibrated });
       setResult(r);
       setQtyEdits({});
       setApproved({});
       api.impact().then(setImpact).catch(() => setImpact(null));
       api.categories(warehouse || undefined).then(setTrends).catch(() => setTrends(null));
       api.overstock(warehouse || undefined).then(setOver).catch(() => setOver(null));
+      api.backtest().then(setBt).catch(() => setBt(null));
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
@@ -275,6 +279,10 @@ export default function App() {
                 ))}
               </select>
             </Field>
+            <label className="flex max-w-[230px] items-start gap-2 pb-1 text-xs text-zinc-600" title="Множитель страхового запаса подобран бэктестом так, чтобы фактическое покрытие спроса соответствовало заявленному уровню сервиса">
+              <input type="checkbox" checked={ssCalibrated} onChange={(e) => setSsCalibrated(e.target.checked)} className="mt-0.5 accent-[#2c7294]" />
+              <span>Калибровать страховой запас по бэктесту{health?.ss_multiplier && health.ss_multiplier !== 1 ? ` (×${health.ss_multiplier.toLocaleString("ru-RU")})` : ""}</span>
+            </label>
             <Field label="Плановый прирост, %/год">
               <input type="number" value={growthPlan} onChange={(e) => setGrowthPlan(e.target.value)} placeholder="0" className="w-24 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
             </Field>
@@ -306,6 +314,61 @@ export default function App() {
               </section>
               {!!result.summary.total_value && (
                 <p className="text-sm text-zinc-600">Сумма заказов по себестоимости ≈ <b>{fmt(result.summary.total_value)} ₸</b> (известна для {result.summary.value_known_positions} из {result.summary.positions} позиций).</p>
+              )}
+
+              {bt && (
+                <section className="rounded-md border border-brand-200 bg-white p-4">
+                  <button onClick={() => setShowBt(!showBt)} className="flex w-full flex-wrap items-baseline justify-between gap-2 text-left">
+                    <h2 className="text-sm font-semibold text-brand-900">Точность прогноза: честная проверка на отложенных данных</h2>
+                    <span className="text-sm text-zinc-700">
+                      ошибка на регулярных артикулах <b className="text-brand-700">{fmt(bt.test.regular_vs_clean.trend.wape, 1)} %</b> против <b>{fmt(bt.test.regular_vs_clean.naive_90d.wape, 1)} %</b> у Excel-среднего
+                    </span>
+                    <span className="text-xs text-zinc-500">{showBt ? "свернуть" : "показать"}</span>
+                  </button>
+                  {showBt && (
+                    <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+                      <div>
+                        <p className="mb-2 text-xs text-zinc-600">
+                          Модель обучена только на данных до {bt.test.cutoff}, прогноз на {bt.test.months.join(", ")} сравнён с фактом. {fmt(bt.test.regular_skus)} регулярных артикулов из {fmt(bt.test.skus_evaluated)}. WAPE = суммарная ошибка в % от продаж, меньше лучше.
+                        </p>
+                        <table className="w-full text-xs">
+                          <thead className="text-left uppercase tracking-wide text-zinc-500">
+                            <tr><th className="py-1">Метод</th><th className="py-1 pl-3 text-right">WAPE</th><th className="py-1 pl-3 text-right">Смещение</th><th className="py-1 pl-3 text-right">WAPE к сырым продажам</th></tr>
+                          </thead>
+                          <tbody>
+                            {bt.models.map((m) => {
+                              const a = bt.test.regular_vs_clean[m];
+                              const r = bt.test.regular_vs_raw[m];
+                              const prod = m === bt.production.model;
+                              return (
+                                <tr key={m} className={`border-t border-zinc-100 ${prod ? "bg-brand-50 font-semibold text-brand-900" : ""}`}>
+                                  <td className="py-1 pr-2">{bt.labels[m]}</td>
+                                  <td className="py-1 text-right tabular-nums">{fmt(a.wape, 1)} %</td>
+                                  <td className="py-1 text-right tabular-nums">{a.bias != null && a.bias > 0 ? "+" : ""}{fmt(a.bias, 1)} %</td>
+                                  <td className="py-1 text-right tabular-nums text-zinc-500">{fmt(r.wape, 1)} %</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="space-y-2 text-xs text-zinc-700">
+                        <div className="rounded-md bg-brand-50 p-3">
+                          <div className="font-semibold text-brand-900">Страховой запас: обещание против факта</div>
+                          <p className="mt-1">Цель {fmt(bt.test.calibration.target_pct)} % артикулов без дефицита. Без калибровки фактически {fmt(bt.test.calibration.coverage_raw_pct, 1)} %. С множителем ×{fmt(bt.test.calibration.multiplier_from_previous_window, 1)}, подобранным на предыдущем окне, вне выборки {fmt(bt.test.calibration.coverage_out_of_sample_pct, 1)} %. В работе множитель ×{fmt(bt.production.ss_multiplier, 1)} по последнему окну; его можно выключить в фильтрах и увидеть цену уровня сервиса.</p>
+                        </div>
+                        <div className="rounded-md bg-accent-300/20 p-3">
+                          <div className="font-semibold text-brand-900">Что показала проверка</div>
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                            <li>Очистка разовых заказов и дефицита снижает ошибку с {fmt(bt.test.regular_vs_clean.ours_no_cleaning.wape, 1)} % до {fmt(bt.test.regular_vs_clean.trend.wape, 1)} %.</li>
+                            <li>Авто-выбор модели по артикулу ({fmt(bt.test.regular_vs_clean.auto.wape, 1)} %) не обыграл единую модель, поэтому не включён.</li>
+                            <li>Нерегулярные артикулы прогнозируются плохо любым методом (~{fmt(bt.test.intermittent_vs_clean.trend.wape, 0)} %): для них помечена низкая надёжность.</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
               )}
 
               {over && (over.overstock_positions > 0 || over.dead_positions > 0) && (
@@ -490,13 +553,14 @@ export default function App() {
             {!detail && !detailErr && <p className="mt-4 text-sm text-zinc-500">Загрузка…</p>}
             {detail && (
               <>
-                <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-6">
+                <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <Stat label="Рекомендовано" value={`${fmt(detail.recommended_qty)}`} tone="indigo" />
                   <Stat label="Остаток" value={fmt(detail.stock)} />
                   <Stat label="В пути" value={fmt(detail.in_transit)} />
                   <Stat label="Прогноз/день" value={fmt(detail.forecast_daily, 1)} />
                   <Stat label="Покрытие" value={`${detail.days_of_cover >= 999 ? "∞" : fmt(detail.days_of_cover)} дн.`} />
                   <Stat label="Страховой запас" value={fmt(detail.safety_stock)} />
+                  <Stat label="Надёжность прогноза" value={`${detail.forecast_confidence ?? "—"}${detail.forecast_wape != null ? ` · ${Math.round(detail.forecast_wape)} %` : ""}`} />
                 </div>
                 <div className="mt-5">
                   <h3 className="mb-2 text-sm font-semibold">Продажи по месяцам, очищенный спрос и прогноз</h3>

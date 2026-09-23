@@ -64,7 +64,7 @@ def ensure_result(params: Params | None = None) -> dict[str, Any]:
         if _last is not None:
             return _last
         params = _last_params or Params(warehouse=get_ds().default_warehouse())
-    key = (params.warehouse, params.category, params.service_level, params.review_days, params.include_zero, params.growth_plan_pct_year)
+    key = (params.warehouse, params.category, params.service_level, params.review_days, params.include_zero, params.growth_plan_pct_year, params.ss_calibrated)
     with _lock:
         if key not in _cache:
             _cache[key] = run(get_ds(), params)
@@ -76,7 +76,7 @@ def ensure_result(params: Params | None = None) -> dict[str, Any]:
 def full_result(params: Params) -> dict[str, Any]:
     """The include_zero variant of a run (all positions), cached like ensure_result but without touching _last."""
     p = Params(**{**params.__dict__, "include_zero": True})
-    key = (p.warehouse, p.category, p.service_level, p.review_days, True, p.growth_plan_pct_year)
+    key = (p.warehouse, p.category, p.service_level, p.review_days, True, p.growth_plan_pct_year, p.ss_calibrated)
     with _lock:
         if key not in _cache:
             _cache[key] = run(get_ds(), p)

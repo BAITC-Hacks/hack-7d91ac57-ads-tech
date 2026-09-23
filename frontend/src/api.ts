@@ -42,6 +42,9 @@ export type Order = {
   outliers_excluded: number;
   outlier_qty_excluded: number;
   justification: string;
+  forecast_wape?: number | null;
+  forecast_confidence?: string;
+  ss_multiplier?: number;
 };
 
 export type SupplierGroup = {
@@ -84,6 +87,8 @@ export type Health = {
   model: string;
   tools: string[];
   calculation_ready: boolean;
+  backtest_ready?: boolean;
+  ss_multiplier?: number;
   data: {
     skus: number;
     categories: string[];
@@ -118,6 +123,20 @@ export type Impact = {
   note: string;
   top: { sku: string; name: string; supplier: string; naive_qty: number; recommended_qty: number; diff_qty: number; diff_money: number; reason: string }[];
 };
+
+type Wm = { wape: number | null; bias: number | null };
+export type BacktestWindow = {
+  cutoff: string;
+  months: string[];
+  skus_evaluated: number;
+  regular_skus: number;
+  regular_vs_clean: Record<string, Wm>;
+  regular_vs_raw: Record<string, Wm>;
+  intermittent_vs_clean: Record<string, Wm>;
+  wins_regular: Record<string, number>;
+  calibration: { skus: number; target_pct: number; coverage_raw_pct: number | null; multiplier: number; coverage_calibrated_in_sample_pct: number | null; multiplier_from_previous_window: number | null; coverage_out_of_sample_pct: number | null };
+};
+export type Backtest = { warehouse: string; labels: Record<string, string>; models: string[]; validation: BacktestWindow; test: BacktestWindow; production: { model: string; ss_multiplier: number; skus_with_error: number }; note: string };
 
 export type Overstock = {
   warehouse: string;
@@ -174,9 +193,14 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export const api = {
   health: () => fetch(`${BASE}/api/health`).then((r) => j<Health>(r)),
-  run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number; growth_plan_pct_year?: number | null }) =>
+  run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number; growth_plan_pct_year?: number | null; ss_calibrated?: boolean }) =>
     fetch(`${BASE}/api/replenish/run`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<RunResult>(r)),
   impact: () => fetch(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
+  backtest: async (): Promise<Backtest | null> => {
+    const r = await fetch(`${BASE}/api/backtest`);
+    if (r.status === 202) return null;
+    return j<Backtest>(r);
+  },
   overstock: (warehouse?: string) =>
     fetch(`${BASE}/api/replenish/overstock${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<Overstock>(r)),
   dailyBrief: (warehouse?: string) =>

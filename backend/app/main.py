@@ -72,6 +72,7 @@ def health():
         "data": state.get_ds().summary(),
         "calculation_ready": state.last_result() is not None,
         "backtest_ready": state.backtest_report() is not None,
+        "ss_multiplier": state.get_ds().ss_multiplier,
     }
 
 
@@ -185,6 +186,7 @@ class RunRequest(BaseModel):
     review_days: int = 14
     include_zero: bool = False
     growth_plan_pct_year: float | None = None  # плановый прирост спроса, %/год, ко всем позициям
+    ss_calibrated: bool = True  # калибровка страхового запаса по бэктесту
 
 
 def _params(req: RunRequest) -> Params:
@@ -195,6 +197,7 @@ def _params(req: RunRequest) -> Params:
         review_days=req.review_days,
         include_zero=req.include_zero,
         growth_plan_pct_year=req.growth_plan_pct_year,
+        ss_calibrated=req.ss_calibrated,
     )
 
 

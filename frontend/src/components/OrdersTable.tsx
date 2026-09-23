@@ -154,6 +154,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                                   <Kv k="Кратность / MOQ" v={`${o.pack_size} / ${o.moq}`} />
                                   <Kv k="Потребность до округления" v={fmt(o.raw_need)} />
                                   <Kv k="Ожидаемый дефицит" v={o.stockout_date ?? "нет"} />
+                                  <Kv k="Надёжность прогноза" v={`${o.forecast_confidence ?? "нет данных"}${o.forecast_wape != null ? ` (ошибка на бэктесте ${Math.round(o.forecast_wape)} %)` : ""}`} />
                                   <Kv k="Сумма заказа" v={o.order_value ? `≈ ${fmt(o.order_value)} ₸` : "себестоимость неизвестна"} />
                                 </div>
                                 <button onClick={() => onOpenSku(o.sku)} className="mt-2 text-xs text-brand-600 hover:underline">

@@ -36,8 +36,11 @@ MONTHS_RU = {1: "январь", 2: "февраль", 3: "март", 4: "апре
 CATEGORY_SERVICE_LEVEL = {"Автоматика": 0.98, "Кабель": 0.95, "Освещение": 0.95, "Розетки и выключатели": 0.95, "Щиты и корпуса": 0.9, "Инструмент": 0.9}
 
 
-def confidence_label(wape: float | None) -> str:
-    """Forecast reliability from the SKU's out-of-sample backtest error."""
+def confidence_label(wape: float | None, monthly_units: float | None = None) -> str:
+    """Forecast reliability from the SKU's out-of-sample backtest error. For piece demand (< 10 units a month)
+    a percentage error is not informative, so it is labelled separately."""
+    if monthly_units is not None and monthly_units < 10:
+        return "штучный спрос"
     if wape is None:
         return "нет данных"
     return "высокая" if wape <= 25 else "средняя" if wape <= 50 else "низкая"
@@ -143,6 +146,7 @@ class Params:
     outlier_client_share: float = 0.6
     include_zero: bool = False
     growth_plan_pct_year: float | None = None  # business lever: planned demand growth applied to all SKUs (adds to per-SKU plan)
+    ss_calibrated: bool = True  # apply the backtest-calibrated safety-stock multiplier
 
 
 # --------------------------------------------------------------------------- steps
@@ -345,7 +349,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     weekly = weekly / np.array([idx[ts.month] for ts in weekly.index])
     sigma_week = float(np.nan_to_num(weekly.std())) if len(weekly) > 2 else 0.0
     sigma = sigma_week / math.sqrt(7)
-    ss_mult = float(ds.ss_multiplier or 1.0)
+    ss_mult = float(ds.ss_multiplier or 1.0) if p.ss_calibrated else 1.0
     safety = z_for(sl) * sigma_week * math.sqrt(horizon / 7) * ss_mult
 
     stock_row = ds.stock[(ds.stock["sku"] == sku) & (ds.stock["warehouse"] == warehouse)]
@@ -404,7 +408,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         parts_txt.append(f"в {stockout_days} дн. дефицита учтён упущенный спрос {_fmt(lost, 0)} шт" + (f" (+{_fmt((lost_uplift - 1) * 100)}% к уровню за год)" if lost_uplift > 1.001 else ""))
     parts_txt.append(f"страховой запас {_fmt(safety, 0)} шт (уровень сервиса {int(sl * 100)}%" + (f", калибровка по бэктесту ×{_fmt(ss_mult, 2)}" if abs(ss_mult - 1) > 1e-9 else "") + ")")
     if wapes.get(choice) is not None:
-        parts_txt.append(f"ошибка прогноза этого артикула на бэктесте {_fmt(wapes[choice], 0)}% (надёжность: {confidence_label(wapes[choice])})")
+        parts_txt.append(f"ошибка прогноза этого артикула на бэктесте {_fmt(wapes[choice], 0)}% (надёжность: {confidence_label(wapes[choice], fc_daily * 30)})")
     parts_txt.append(f"остаток {_fmt(stock, 0)}, в пути {_fmt(in_transit, 0)}")
     if rec > 0:
         tail = f"→ потребность {_fmt(raw_need, 0)}"
@@ -452,7 +456,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         "forecast_model_label": FORECAST_MODELS[choice],
         "model_backtest_wape": wapes or None,
         "forecast_wape": wapes.get(choice),
-        "forecast_confidence": confidence_label(wapes.get(choice)),
+        "forecast_confidence": confidence_label(wapes.get(choice), fc_daily * 30),
         "ss_multiplier": round(ss_mult, 2),
         "trend_r2": round(r2, 2),
         "plan_pct_year": round(plan_month * 1200, 1),
