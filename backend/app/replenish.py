@@ -67,7 +67,20 @@ class Dataset:
         if today is None:
             today = (sales["date"].max() + pd.Timedelta(days=1)).date()
         ds.today = today
+        meta = f / "meta.json"
+        if meta.exists():
+            import json as _json
+
+            m = _json.loads(meta.read_text())
+            ds.notes = list(m.get("notes", []))
+            ds.source = str(m.get("source", ""))
+        else:
+            ds.notes = ["Синтетические данные в формате выгрузки 1С (backend/app/synth.py, seed 42); клиенты обезличены."]
+            ds.source = "Синтетика"
         return ds
+
+    notes: list = field(default_factory=list)
+    source: str = ""
 
     def replace(self, kind: str, df: pd.DataFrame) -> None:
         setattr(self, kind, df)
@@ -99,6 +112,8 @@ class Dataset:
             "in_transit_lines": int(len(self.in_transit)),
             "today": str(self.today),
             "default_warehouse": self.default_warehouse(),
+            "source": self.source,
+            "notes": self.notes,
         }
 
 
