@@ -22,6 +22,8 @@
 | Vite | 6 | MIT | сборка фронтенда |
 | Tailwind CSS | 4 | MIT | стили |
 | Nginx | alpine | BSD-2 | раздача статики |
+| Шрифт Montserrat, Google Fonts | 400–700 | SIL OFL 1.1 | шрифт интерфейса в стиле ekt.kz, загружается с fonts.googleapis.com |
+| cloudflared, образ `cloudflare/cloudflared` | latest | Apache-2.0 | временная публичная ссылка на демо с сервера Brev (`scripts/brev-deploy.sh`), для проверки не нужна |
 
 ## Модели и API
 
