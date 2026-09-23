@@ -44,6 +44,13 @@ Base URL в dev: `/api` (Vite проксирует на `http://localhost:8000`)
 ## GET /api/replenish/orders?supplier=S1&urgency=critical
 Последний результат расчёта, плоский список `orders` с теми же полями + `supplier`, `supplier_id`.
 
+## GET /api/replenish/impact
+Эффект vs наивный Excel-расчёт по последнему результату. Для карточек «до/после» на дашборде.
+```json
+{"positions":41,"naive_overorder_qty":12000,"naive_overorder_money":5400000,"naive_underorder_qty":3100,"naive_underorder_money":2100000,
+ "note":"...","top":[{"sku":"KBL-001","name":"...","supplier":"...","naive_qty":900,"recommended_qty":600,"diff_qty":300,"diff_money":150000,"reason":"выброс|дефицит|сезон/тренд/страховой"}]}
+```
+
 ## GET /api/sku/{sku}?warehouse=Главный
 Данные для графика по артикулу.
 ```json

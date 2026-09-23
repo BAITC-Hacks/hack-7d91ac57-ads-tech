@@ -17,7 +17,7 @@ from .config import get_settings
 from .ingest import extract_text
 from .llm import run_agent, tool_specs
 from .rag import store
-from .replenish import Params, compute_sku, export_rows, sku_detail
+from .replenish import Params, compute_sku, export_rows, impact, sku_detail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 settings = get_settings()
@@ -165,6 +165,13 @@ def replenish_orders(supplier: str | None = None, urgency: str | None = None, wa
     if category:
         rows = [r for r in rows if r["category"] == category]
     return {"count": len(rows), "orders": rows}
+
+
+@app.get("/api/replenish/impact")
+def replenish_impact():
+    """Эффект относительно наивного (Excel) расчёта: избыточный и недостаточный заказ в штуках и тенге."""
+    res = state.ensure_result()
+    return impact(state.get_ds(), res)
 
 
 @app.get("/api/sku/{sku}")
