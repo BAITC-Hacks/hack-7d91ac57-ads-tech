@@ -169,7 +169,17 @@ export type BacktestWindow = {
   wins_regular: Record<string, number>;
   calibration: { skus: number; target_pct: number; coverage_raw_pct: number | null; multiplier: number; coverage_calibrated_in_sample_pct: number | null; multiplier_from_previous_window: number | null; coverage_out_of_sample_pct: number | null };
 };
-export type Backtest = { warehouse: string; labels: Record<string, string>; models: string[]; validation: BacktestWindow; test: BacktestWindow; production: { model: string; ss_multiplier: number; skus_with_error: number }; note: string };
+export type Backtest = {
+  warehouse: string;
+  labels: Record<string, string>;
+  models: string[];
+  modes: Record<string, string>;
+  selected_on_validation: string;
+  validation: BacktestWindow;
+  test: BacktestWindow;
+  production: { model: string; mode_label: string; ss_multiplier: number; skus_with_error: number };
+  note: string;
+};
 
 export type Overstock = {
   warehouse: string;

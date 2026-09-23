@@ -88,7 +88,9 @@ def full_result(params: Params) -> dict[str, Any]:
 
 def _fingerprint(ds: Dataset) -> str:
     lt = sorted(zip(ds.suppliers["supplier_id"].astype(str), ds.suppliers["lead_time_days"].astype(int)))
-    return f"{len(ds.sales)}|{float(ds.sales['qty'].sum()):.0f}|{ds.sales['date'].max()}|{len(ds.stockouts)}|{ds.today}|{lt}"
+    from .replenish import ENGINE_VERSION
+
+    return f"v{ENGINE_VERSION}|{len(ds.sales)}|{float(ds.sales['qty'].sum()):.0f}|{ds.sales['date'].max()}|{len(ds.stockouts)}|{ds.today}|{lt}"
 
 
 def ensure_backtest() -> dict[str, Any]:
@@ -120,9 +122,10 @@ def ensure_backtest() -> dict[str, Any]:
         ds.model_choice = None
         ds.model_wape = rep["production"]["wape"]
         ds.ss_multiplier = float(rep["production"]["ss_multiplier"])
+        ds.forecast_mode = rep["production"].get("model", "trend")
         _cache.clear()
     _backtest = {k: v for k, v in rep.items() if k not in ("production", "fingerprint")}
-    _backtest["production"] = {"model": rep["production"].get("model", "trend"), "ss_multiplier": rep["production"]["ss_multiplier"], "skus_with_error": len(rep["production"]["wape"])}
+    _backtest["production"] = {"model": rep["production"].get("model", "trend"), "mode_label": rep["production"].get("mode_label", ""), "ss_multiplier": rep["production"]["ss_multiplier"], "skus_with_error": len(rep["production"]["wape"])}
     return _backtest
 
 

@@ -28,10 +28,18 @@ import pandas as pd
 
 Z = {0.9: 1.2816, 0.95: 1.6449, 0.98: 2.0537, 0.99: 2.3263}
 FORECAST_MODELS = {
-    "trend": "сезонность + тренд",
+    "trend": "сезонность артикула + линейный тренд",
     "recent": "сезонность + уровень последних 3 мес.",
     "year": "сезонность + средний уровень 12 мес.",
 }
+# forecast modes chosen once for the whole assortment by the backtest (app.backtest.evaluate)
+FORECAST_MODES = {
+    "trend": "сезонность артикула + линейный тренд",
+    "blend": "сезонность артикула и категории + уровень 6 мес.",
+    "blend_growth": "сезонность артикула и категории + уровень 6 мес. + устойчивый рост",
+    "blend_damped": "сезонность артикула и категории + уровень 6 мес. + рост с затуханием",
+}
+ENGINE_VERSION = "2"
 MONTHS_RU = {1: "январь", 2: "февраль", 3: "март", 4: "апрель", 5: "май", 6: "июнь", 7: "июль", 8: "август", 9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"}
 CATEGORY_SERVICE_LEVEL = {"Автоматика": 0.98, "Кабель": 0.95, "Освещение": 0.95, "Розетки и выключатели": 0.95, "Щиты и корпуса": 0.9, "Инструмент": 0.9}
 
@@ -107,6 +115,22 @@ class Dataset:
     model_wape: dict | None = None
     ss_multiplier: float = 1.0
     signals: dict | None = None  # sku → sales signals from managers' chats (app.signals)
+    forecast_mode: str = "trend"  # chosen by the backtest for the whole assortment
+    _cat_idx: dict | None = None
+
+    def category_index(self, category: str, warehouse: str) -> dict[int, float] | None:
+        """Seasonal indices of a whole category (pooled, much less noisy than one SKU); None if < 18 months."""
+        if self._cat_idx is None:
+            self._cat_idx = {}
+        key = (category, warehouse)
+        if key not in self._cat_idx:
+            skus = set(self.products.loc[self.products["category"] == category, "sku"])
+            s = self.sales[(self.sales["warehouse"] == warehouse) & (self.sales["sku"].isin(skus)) & (self.sales["date"] < pd.Timestamp(self.today))]
+            m = s.assign(p=s["date"].dt.to_period("M")).groupby("p")["qty"].sum()
+            last_full = pd.Period(self.today, "M") - 1
+            m = m[m.index <= last_full]
+            self._cat_idx[key] = seasonal_and_trend(m)[0] if len(m) >= 18 else None
+        return self._cat_idx[key]
 
     def tx(self, sku: str, warehouse: str) -> pd.DataFrame:
         """Transactions for one SKU/warehouse, from a cached groupby (2 700 SKUs × 250 k rows otherwise)."""
@@ -325,6 +349,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     if len(monthly) and (end.day < calendar.monthrange(end.year, end.month)[1] - 1):
         monthly = monthly.iloc[:-1]
     idx, level_trend, growth_hist, r2 = seasonal_and_trend(monthly)
+    idx_sku_orig = dict(idx)
     # alternative level estimates on the same cleaned, deseasonalized series; the choice per SKU comes from backtest
     if len(monthly):
         deseas = np.nan_to_num(monthly.values.astype(float)) / np.array([idx[pp.month] for pp in monthly.index])
@@ -337,6 +362,17 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         choice = "trend"
     level = {"trend": level_trend, "recent": level_recent, "year": level_year}[choice]
     growth_used = growth_hist if choice == "trend" else 0.0
+    mode = ds.forecast_mode if ds.forecast_mode in FORECAST_MODES else "trend"
+    cidx = ds.category_index(str(prod["category"]), warehouse) if mode != "trend" else None
+    level_blend6 = level_recent
+    if mode != "trend" and len(monthly):
+        idx_b = {m: 0.5 * idx[m] + 0.5 * cidx[m] for m in range(1, 13)} if cidx else idx
+        deseas_b = np.nan_to_num(monthly.values.astype(float)) / np.array([idx_b[pp.month] for pp in monthly.index])
+        level_blend6 = float(np.mean(deseas_b[-6:])) if len(deseas_b) >= 1 else level_recent
+        idx = idx_b
+        g_mode = {"blend": 0.0, "blend_growth": growth_hist, "blend_damped": 0.5 * growth_hist}[mode]
+        level = level_blend6 * ((1 + g_mode) ** 2.5)  # the 6-month level is centred 2.5 months before the last month
+        growth_used = g_mode
     level *= lost_uplift
     plan_year = float(prod.get("growth_plan_pct_year", 0) or 0) + float(p.growth_plan_pct_year or 0)
     plan_month = plan_year / 100 / 12
@@ -406,7 +442,13 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     wapes = (ds.model_wape or {}).get(sku) or {}
     if choice != "trend":
         parts_txt.append(f"модель прогноза «{FORECAST_MODELS[choice]}» выбрана бэктестом")
-    if growth_hist and choice == "trend":
+    if mode != "trend":
+        parts_txt.append(f"модель прогноза выбрана бэктестом для всего ассортимента: {FORECAST_MODES[mode]}")
+    if growth_hist and mode != "trend" and growth_used:
+        parts_txt.append(f"устойчивый тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес учтён" + (" с затуханием" if mode == "blend_damped" else ""))
+    elif growth_hist and mode != "trend":
+        parts_txt.append(f"тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес не экстраполируется: на бэктесте модель без экстраполяции точнее")
+    elif growth_hist and choice == "trend":
         parts_txt.append(f"устойчивый тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес (R²={_fmt(r2, 2)})")
     elif growth_hist:
         parts_txt.append(f"тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес не экстраполируется: на бэктесте точнее выбранная модель")
@@ -420,8 +462,9 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     parts_txt.append(f"страховой запас {_fmt(safety, 0)} шт (уровень сервиса {int(sl * 100)}%" + (f", калибровка по бэктесту ×{_fmt(ss_mult, 2)}" if abs(ss_mult - 1) > 1e-9 else "") + ")")
     if sig_active:
         parts_txt.append(f"сигналы продаж: ожидается {_fmt(sum(x['qty'] for x in sig_active), 0)} шт, с учётом вероятности {_fmt(signal_qty, 0)} шт — " + ("добавлено в заказ" if p.include_signals else "в заказ не включено (галочка «учитывать сигналы продаж»)"))
-    if wapes.get(choice) is not None:
-        parts_txt.append(f"ошибка прогноза этого артикула на бэктесте {_fmt(wapes[choice], 0)}% (надёжность: {confidence_label(wapes[choice], fc_daily * 30)})")
+    w_key = mode if mode in wapes else choice
+    if wapes.get(w_key) is not None:
+        parts_txt.append(f"ошибка прогноза этого артикула на бэктесте {_fmt(wapes[w_key], 0)}% (надёжность: {confidence_label(wapes[w_key], fc_daily * 30)})")
     parts_txt.append(f"остаток {_fmt(stock, 0)}, в пути {_fmt(in_transit, 0)}")
     if rec > 0:
         tail = f"→ потребность {_fmt(raw_need, 0)}"
@@ -464,12 +507,13 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         "sigma_daily": round(sigma, 2),
         "seasonal_factor": round(season_now, 3),
         "trend_pct_month": round(growth_hist * 100, 2),
-        "trend_used": bool(choice == "trend" and growth_hist),
+        "trend_used": bool(growth_used),
         "forecast_model": choice,
-        "forecast_model_label": FORECAST_MODELS[choice],
+        "forecast_model_label": FORECAST_MODES.get(mode, FORECAST_MODELS[choice]),
         "model_backtest_wape": wapes or None,
-        "forecast_wape": wapes.get(choice),
-        "forecast_confidence": confidence_label(wapes.get(choice), fc_daily * 30),
+        "forecast_wape": wapes.get(w_key),
+        "forecast_confidence": confidence_label(wapes.get(w_key), fc_daily * 30),
+        "forecast_mode": mode,
         "signal_qty": round(signal_qty, 1),
         "signals_included": bool(p.include_signals and signal_qty > 0),
         "signals": [{k: x.get(k) for k in ("date", "channel", "manager", "type", "qty", "expected_month", "probability", "quote")} for x in sig_all[:5]],
@@ -495,6 +539,8 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
             "level_trend": level_trend,
             "level_recent": level_recent,
             "level_year": level_year,
+            "level_blend6": level_blend6,
+            "seasonal_index_sku": idx_sku_orig,
             "lost_uplift": lost_uplift,
             "growth_hist": growth_hist,
             "plan_month": plan_month,

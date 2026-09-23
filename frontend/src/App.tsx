@@ -262,7 +262,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
   }, [result, urgencyFilter, search, sortKey]);
 
   const ready = health?.calculation_ready ?? false;
-  const wapeOurs = bt?.test.regular_vs_clean.trend.wape;
+  const wapeOurs = bt?.test.regular_vs_clean.auto.wape;
   const wapeExcel = bt?.test.regular_vs_clean.naive_90d.wape;
 
   const tabs: [Tab, string, string | null][] = [
@@ -562,10 +562,14 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
                             {bt.models.map((m) => {
                               const a = bt.test.regular_vs_clean[m];
                               const r = bt.test.regular_vs_raw[m];
-                              const prod = m === bt.production.model;
+                              const ours = m === "auto";
+                              const inWork = m === bt.production.model;
                               return (
-                                <tr key={m} className={`border-t border-zinc-100 ${prod ? "bg-brand-50 font-semibold text-brand-900" : ""}`}>
-                                  <td className="py-1.5 pr-2">{bt.labels[m]}</td>
+                                <tr key={m} className={`border-t border-zinc-100 ${ours ? "bg-brand-50 font-semibold text-brand-900" : ""}`}>
+                                  <td className="py-1.5 pr-2">
+                                    {bt.labels[m]}
+                                    {inWork && <span className="ml-1.5 rounded bg-accent-400 px-1.5 py-0.5 text-[10px] font-bold text-brand-900">в работе</span>}
+                                  </td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums">{fmt(a.wape, 1)} %</td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums">{a.bias != null && a.bias > 0 ? "+" : ""}{fmt(a.bias, 1)} %</td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums text-zinc-500">{fmt(r.wape, 1)} %</td>
@@ -585,9 +589,13 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
                         <div className="rounded-md bg-accent-300/20 p-3">
                           <div className="font-semibold text-brand-900">Что показала проверка</div>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                            <li>Очистка разовых заказов и дефицита снижает ошибку с {fmt(bt.test.regular_vs_clean.ours_no_cleaning.wape, 1)} % до {fmt(bt.test.regular_vs_clean.trend.wape, 1)} %.</li>
-                            <li>Авто-выбор модели по артикулу ({fmt(bt.test.regular_vs_clean.auto.wape, 1)} %) не обыграл единую модель, поэтому не включён.</li>
-                            <li>Нерегулярные артикулы любой метод прогнозирует с ошибкой около {fmt(bt.test.intermittent_vs_clean.trend.wape, 0)} %: для них в таблице метка надёжности.</li>
+                            <li>
+                              Модель для всего ассортимента выбрана на окне {bt.validation.months.join(", ")}: «{bt.labels[bt.selected_on_validation] ?? bt.selected_on_validation}». На следующем окне, которое при выборе не использовалось, её ошибка {fmt(bt.test.regular_vs_clean.auto.wape, 1)} % против {fmt(bt.test.regular_vs_clean.naive_90d.wape, 1)} % у Excel-среднего.
+                            </li>
+                            <li>В работе «{bt.labels[bt.production.model] ?? bt.production.model}»: выбрана заново по последнему окну. Выбор повторяется при каждой загрузке данных.</li>
+                            <li>Очистка разовых заказов и дефицита снижает ошибку с {fmt(bt.test.regular_vs_clean.ours_no_cleaning.wape, 1)} % до {fmt(bt.test.regular_vs_clean.trend.wape, 1)} % на той же модели.</li>
+                            <li>Переключение модели по каждому артикулу проверено и отклонено: на коротких окнах оно переобучается.</li>
+                            <li>Нерегулярные артикулы любой метод прогнозирует с ошибкой около {fmt(bt.test.intermittent_vs_clean.auto.wape, 0)} %: для них в таблице метка надёжности.</li>
                           </ul>
                         </div>
                       </div>

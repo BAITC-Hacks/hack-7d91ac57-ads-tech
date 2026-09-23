@@ -1,17 +1,21 @@
-"""Honest out-of-sample backtest, per-SKU forecast model selection and safety-stock calibration.
+"""Honest out-of-sample backtest, assortment-level forecast model selection and safety-stock calibration.
 
 Procedure (evaluate):
-  window A (validation): pretend «today» = cutoff_A, train only on data before it, forecast 3 months, compare with
-                         actuals → choose the best forecasting model per SKU and a safety-stock multiplier.
-  window B (test):       same with cutoff_B = the next 3 months; the choices made on A are applied to B, so the
-                         «auto» row is a genuine out-of-sample result. B's own errors give the production choice.
+  window A (validation): pretend «today» = cutoff_A, train only on data before it, forecast 3 months, compare with actuals.
+                         The forecast mode with the lowest error on A is chosen for the whole assortment, and the
+                         safety-stock multiplier for that mode is calibrated on A.
+  window B (test):       the next 3 months. The mode chosen on A is applied to B («auto» row) and the multiplier from A
+                         is checked on B: both are genuine out-of-sample results. B's own errors pick the production mode
+                         and multiplier (the most recent evidence).
 
-Candidate models (all on the cleaned demand, all keep seasonality so the brief's must-have 2 holds):
-  trend   seasonal indices × linear trend level (the engine default)
-  recent  seasonal indices × deseasonalized mean of the last 3 months
-  year    seasonal indices × deseasonalized mean of the last 12 months
-Baselines for comparison (raw sales): naive_90d («Excel»), seasonal_naive (same month last year), ma_12m;
-ablation: ours_no_cleaning (trend model on raw sales, no outlier removal, no stockout restoration).
+Forecast modes (all on cleaned demand, all seasonal, so the brief's must-have 2 holds):
+  trend         SKU seasonal indices × linear trend level
+  blend         seasonal indices shrunk 50/50 towards the category's pooled indices × deseasonalized 6-month level
+  blend_growth  blend + sustained trend (R² gate) extrapolated from the middle of the 6-month window
+  blend_damped  blend + half of the sustained trend
+Baselines (raw sales): naive_90d («Excel»), seasonal_naive (same month last year), ma_12m;
+ablation: ours_no_cleaning (trend mode on raw sales, no outlier removal, no stockout restoration).
+Per-SKU model switching was tested earlier and rejected (it overfits 3-month windows).
 
 Metrics: WAPE = Σ|F − A| / ΣA over SKU×month, Bias = Σ(F − A) / ΣA. A_clean = actual sales with one-off orders
 excluded (the regular demand we plan for). SKU-months with a known stockout are excluded. «Regular» SKUs are sold
@@ -27,6 +31,7 @@ import collections
 import copy
 import multiprocessing
 import os
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -34,15 +39,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .replenish import FORECAST_MODELS, Dataset, Params, compute_sku, detect_outliers, forecast_horizon
+from .replenish import FORECAST_MODES, Dataset, Params, compute_sku, detect_outliers, forecast_horizon
 
-VARIANTS = ["trend", "recent", "year"]
-MODELS = ["auto", "trend", "recent", "year", "ours_no_cleaning", "naive_90d", "seasonal_naive", "ma_12m"]
+VARIANTS = ["trend", "blend", "blend_growth", "blend_damped"]
+MODELS = ["auto", *VARIANTS, "ours_no_cleaning", "naive_90d", "seasonal_naive", "ma_12m"]
 MODEL_LABEL = {
-    "auto": "Эксперимент: авто-выбор модели по артикулу",
-    "trend": "Сезонность + тренд — модель в работе",
-    "recent": "Сезонность + уровень 3 мес.",
-    "year": "Сезонность + уровень 12 мес.",
+    "auto": "Автовыбор модели на весь ассортимент (выбор на окне проверки)",
+    "trend": "Сезонность артикула + тренд",
+    "blend": "Сезонность с категорией + уровень 6 мес.",
+    "blend_growth": "Сезонность с категорией + уровень 6 мес. + рост",
+    "blend_damped": "Сезонность с категорией + уровень 6 мес. + рост с затуханием",
     "ours_no_cleaning": "Сезонность + тренд без очистки данных",
     "naive_90d": "Excel: среднее за 90 дней",
     "seasonal_naive": "Тот же месяц прошлого года",
@@ -51,6 +57,7 @@ MODEL_LABEL = {
 MULTIPLIERS = [round(1.0 + 0.1 * i, 1) for i in range(31)]  # 1.0 … 4.0
 
 _G: dict[str, Any] = {}  # shared with forked workers
+_RUN_LOCK = threading.Lock()  # one window at a time: _G is process-global (server background job vs. an API call or a test)
 
 
 def _train(ds: Dataset, cutoff: date, clean: bool) -> Dataset:
@@ -65,14 +72,34 @@ def _train(ds: Dataset, cutoff: date, clean: bool) -> Dataset:
         t.stockouts = ds.stockouts.iloc[0:0]
     t.today = cutoff
     t._groups = None
+    t._cat_idx = None
     t.model_choice = None
     t.model_wape = None
     t.ss_multiplier = 1.0
+    t.forecast_mode = "trend"  # levels in _series are then the raw building blocks for every mode
+    t.signals = None
     return t
 
 
 def _month_days(p: pd.Period) -> int:
     return calendar.monthrange(p.year, p.month)[1]
+
+
+def _mode_params(s: dict[str, Any], cidx: dict[int, float] | None) -> dict[str, tuple[float, float, dict[int, float]]]:
+    """(level incl. lost-demand uplift, monthly growth incl. plan, seasonal indices) for every forecast mode."""
+    idx = s["seasonal_index_sku"]
+    up, g, plan = s["lost_uplift"], s["growth_hist"], s["plan_month"]
+    idx_b = {m: 0.5 * idx[m] + 0.5 * cidx[m] for m in range(1, 13)} if cidx else idx
+    mon = s["monthly"]
+    if len(mon):
+        d = np.nan_to_num(mon.values.astype(float)) / np.array([idx_b[p.month] for p in mon.index])
+        l6 = float(np.mean(d[-6:]))
+    else:
+        l6 = s["level_trend"]
+    out = {"trend": (s["level_trend"] * up, g + plan, idx)}
+    for mode, gm in (("blend", 0.0), ("blend_growth", g), ("blend_damped", 0.5 * g)):
+        out[mode] = (l6 * ((1 + gm) ** 2.5) * up, gm + plan, idx_b)
+    return out
 
 
 def _one(sku: str) -> dict[str, Any] | None:
@@ -82,7 +109,7 @@ def _one(sku: str) -> dict[str, Any] | None:
     wh: str = _G["wh"]
     cutoff: date = _G["cutoff"]
     months: list[pd.Period] = _G["months"]
-    choice: dict[str, str] = _G.get("choice") or {}
+    mode: str = _G.get("mode") or "trend"
     ts = pd.Timestamp(cutoff)
 
     tx_full = full.tx(sku, wh)
@@ -112,10 +139,8 @@ def _one(sku: str) -> dict[str, Any] | None:
 
     r = compute_sku(tr, sku, wh, Params(warehouse=wh))
     s = r["_series"]
-    idx, lm, up = s["seasonal_index"], s["last_month"], s["lost_uplift"]
-    L = {"trend": s["level_trend"], "recent": s["level_recent"], "year": s["level_year"]}
-    g = {"trend": s["growth_hist"] + s["plan_month"], "recent": s["plan_month"], "year": s["plan_month"]}
-    ch = choice.get(sku, "trend")
+    lm = s["last_month"]
+    mp = _mode_params(s, tr.category_index(r["category"], wh))
     r_raw = compute_sku(tr_raw, sku, wh, Params(warehouse=wh, outlier_z=1e12, outlier_client_share=2.0))
     sr = r_raw["_series"]
     mean90 = float(hist.loc[hist["date"] >= ts - pd.Timedelta(days=90), "qty"].sum()) / 90.0
@@ -124,10 +149,10 @@ def _one(sku: str) -> dict[str, Any] | None:
     rows = []
     for p in months:
         k = (p - lm).n
-        f = {v: L[v] * up * ((1 + g[v]) ** k) * idx[p.month] for v in VARIANTS}
-        f["auto"] = f[ch]
+        f = {v: L * ((1 + g) ** k) * ix[p.month] for v, (L, g, ix) in mp.items()}
+        f["auto"] = f[mode]
         kr = (p - sr["last_month"]).n
-        f["ours_no_cleaning"] = sr["level_trend"] * sr["lost_uplift"] * ((1 + sr["growth_hist"] + sr["plan_month"]) ** kr) * sr["seasonal_index"][p.month]
+        f["ours_no_cleaning"] = sr["level_trend"] * sr["lost_uplift"] * ((1 + sr["growth_hist"] + sr["plan_month"]) ** kr) * sr["seasonal_index_sku"][p.month]
         f["naive_90d"] = mean90 * _month_days(p)
         sn = hist_m.get(p - 12, np.nan)
         f["seasonal_naive"] = float(sn) if not pd.isna(sn) else f["naive_90d"]
@@ -139,12 +164,11 @@ def _one(sku: str) -> dict[str, Any] | None:
     end = ts + pd.Timedelta(days=horizon)
     actual_h = float(flagged.loc[flagged["date"] < end, "qty_clean"].sum())
     so_in_h = any((row.date_from < end) and (row.date_to >= ts) for row in so.itertuples())
-    fc_h = {v: float(forecast_horizon(cutoff, horizon, L[v] * up, g[v], idx, lm)[0]) for v in VARIANTS}
+    fc_h = {v: float(forecast_horizon(cutoff, horizon, L, g, ix, lm)[0]) for v, (L, g, ix) in mp.items()}
     return {
         "sku": sku,
         "category": r["category"],
         "regular": active_months >= 8,
-        "choice": ch,
         "rows": rows,
         "cover": None if so_in_h else {"actual": actual_h, "fc": fc_h, "safety": float(r["safety_stock"]), "sl": float(r["service_level"])},
     }
@@ -160,57 +184,59 @@ def _metrics(points: list[dict[str, Any]], target: str) -> dict[str, dict[str, f
     return out
 
 
-def run_window(ds: Dataset, wh: str, cutoff: date, horizon_months: int = 3, choice: dict | None = None, m_prev: float | None = None) -> dict[str, Any]:
+def run_window(ds: Dataset, wh: str, cutoff: date, horizon_months: int = 3, mode: str = "trend", m_prev: float | None = None) -> dict[str, Any]:
     months = [pd.Period(cutoff, "M") + k for k in range(horizon_months)]
     skus = sorted(set(ds.sales.loc[ds.sales["warehouse"] == wh, "sku"]) & set(ds.products["sku"]))
     ds.tx(skus[0], wh)
     tr, tr_raw = _train(ds, cutoff, True), _train(ds, cutoff, False)
     tr.tx(skus[0], wh)
     tr_raw.tx(skus[0], wh)
-    _G.update(full=ds, train=tr, train_raw=tr_raw, wh=wh, cutoff=cutoff, months=months, choice=choice or {})
+    for c in ds.products["category"].unique():  # pooled seasonality per category, computed before forking
+        tr.category_index(str(c), wh)
     n = min(os.cpu_count() or 1, 8)
-    try:
-        if n > 1 and os.name == "posix" and len(skus) > 200:
-            with multiprocessing.get_context("fork").Pool(n) as pool:
-                results = [x for x in pool.imap(_one, skus, chunksize=64) if x]
-        else:
-            results = [x for x in map(_one, skus) if x]
-    finally:
-        _G.clear()
+    with _RUN_LOCK:
+        _G.update(full=ds, train=tr, train_raw=tr_raw, wh=wh, cutoff=cutoff, months=months, mode=mode)
+        try:
+            if n > 1 and os.name == "posix" and len(skus) > 200:
+                with multiprocessing.get_context("fork").Pool(n) as pool:
+                    results = [x for x in pool.imap(_one, skus, chunksize=64) if x]
+            else:
+                results = [x for x in map(_one, skus) if x]
+        finally:
+            _G.clear()
 
     def pts(regular: bool | None) -> list[dict[str, Any]]:
         return [dict(p, sku=r["sku"], category=r["category"]) for r in results if regular is None or r["regular"] == regular for p in r["rows"] if not p["stockout"]]
 
     reg, irr, allp = pts(True), pts(False), pts(None)
+    reg_m = _metrics(reg, "a_clean")
+    best_mode = min(VARIANTS, key=lambda v: (reg_m[v]["wape"] if reg_m[v]["wape"] is not None else 1e9, VARIANTS.index(v)))
 
-    # per-SKU errors → selection for the next window / production
-    sel_choice: dict[str, str] = {}
-    sel_wape: dict[str, dict[str, float]] = {}
+    sku_wape: dict[str, dict[str, float]] = {}
     wins = collections.Counter()
     for r in results:
         rows = [p for p in r["rows"] if not p["stockout"]]
         tot = sum(p["a_clean"] for p in rows)
         if len(rows) < 2 or tot <= 0:
             continue
-        errs = {v: sum(abs(p[v] - p["a_clean"]) for p in rows) for v in VARIANTS}
-        best = min(VARIANTS, key=lambda v: (errs[v], VARIANTS.index(v)))
-        sel_choice[r["sku"]] = best
-        sel_wape[r["sku"]] = {v: round(100 * errs[v] / tot, 1) for v in VARIANTS}
+        sku_wape[r["sku"]] = {v: round(100 * sum(abs(p[v] - p["a_clean"]) for p in rows) / tot, 1) for v in VARIANTS}
         if r["regular"]:
             allerr = {m: sum(abs(p[m] - p["a_clean"]) for p in rows) for m in MODELS if m != "auto"}
             wins[min(allerr, key=allerr.get)] += 1
 
-    # safety-stock coverage with the model actually used in this window («auto» = choice from the previous window)
-    covers = [(r["cover"], r["choice"]) for r in results if r["cover"] and r["regular"]]
+    covers = [r["cover"] for r in results if r["cover"] and r["regular"]]
 
-    def coverage(m: float) -> float | None:
+    def coverage(m: float, v: str) -> float | None:
         if not covers:
             return None
-        ok = sum(1 for c, _ in covers if c["actual"] <= c["fc"]["trend"] + m * c["safety"])  # production model
+        ok = sum(1 for c in covers if c["actual"] <= c["fc"][v] + m * c["safety"])
         return round(100 * ok / len(covers), 1)
 
-    target = round(100 * float(np.median([c["sl"] for c, _ in covers])), 1) if covers else 95.0
-    m_star = next((m for m in MULTIPLIERS if (coverage(m) or 0) >= target), MULTIPLIERS[-1])
+    target = round(100 * float(np.median([c["sl"] for c in covers])), 1) if covers else 95.0
+    calib_by_mode = {}
+    for v in VARIANTS:
+        m_star = next((m for m in MULTIPLIERS if (coverage(m, v) or 0) >= target), MULTIPLIERS[-1])
+        calib_by_mode[v] = {"coverage_raw_pct": coverage(1.0, v), "multiplier": m_star, "coverage_calibrated_in_sample_pct": coverage(m_star, v)}
     cats = {}
     for c in sorted({p["category"] for p in reg}):
         cp = [p for p in reg if p["category"] == c]
@@ -220,23 +246,26 @@ def run_window(ds: Dataset, wh: str, cutoff: date, horizon_months: int = 3, choi
     return {
         "cutoff": str(cutoff),
         "months": [str(m) for m in months],
+        "mode_applied": mode,
+        "best_mode": best_mode,
         "skus_evaluated": len(results),
         "regular_skus": sum(1 for r in results if r["regular"]),
-        "regular_vs_clean": _metrics(reg, "a_clean"),
+        "regular_vs_clean": reg_m,
         "regular_vs_raw": _metrics(reg, "a_raw"),
         "intermittent_vs_clean": _metrics(irr, "a_clean"),
         "all_vs_clean": _metrics(allp, "a_clean"),
         "wins_regular": dict(wins),
         "by_category": cats,
-        "selection": {"choice": sel_choice, "wape": sel_wape, "distribution": dict(collections.Counter(sel_choice.values()))},
+        "sku_wape": sku_wape,
+        "calibration_by_mode": calib_by_mode,
         "calibration": {
             "skus": len(covers),
             "target_pct": target,
-            "coverage_raw_pct": coverage(1.0),
-            "multiplier": m_star,
-            "coverage_calibrated_in_sample_pct": coverage(m_star),
+            "coverage_raw_pct": coverage(1.0, mode),
+            "multiplier": calib_by_mode[mode]["multiplier"],
+            "coverage_calibrated_in_sample_pct": calib_by_mode[mode]["coverage_calibrated_in_sample_pct"],
             "multiplier_from_previous_window": m_prev,
-            "coverage_out_of_sample_pct": coverage(m_prev) if m_prev else None,
+            "coverage_out_of_sample_pct": coverage(m_prev, mode) if m_prev else None,
         },
     }
 
@@ -246,41 +275,46 @@ def evaluate(ds: Dataset, warehouse: str | None = None, horizon_months: int = 3)
     last_full = pd.Period(ds.today, "M") - 1
     cut_b = (last_full - (horizon_months - 1)).start_time.date()
     cut_a = (last_full - (2 * horizon_months - 1)).start_time.date()
-    a = run_window(ds, wh, cut_a, horizon_months)
-    b = run_window(ds, wh, cut_b, horizon_months, choice=a["selection"]["choice"], m_prev=a["calibration"]["multiplier"])
+    a = run_window(ds, wh, cut_a, horizon_months, mode="trend")
+    mode_a = a["best_mode"]
+    m_a = a["calibration_by_mode"][mode_a]["multiplier"]
+    b = run_window(ds, wh, cut_b, horizon_months, mode=mode_a, m_prev=m_a)
+    mode_b = b["best_mode"]
 
     def strip(w: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in w.items() if k != "selection"} | {"selection_distribution": w["selection"]["distribution"]}
+        return {k: v for k, v in w.items() if k not in ("sku_wape",)}
 
     return {
         "warehouse": wh,
         "labels": MODEL_LABEL,
         "models": MODELS,
+        "modes": FORECAST_MODES,
+        "selected_on_validation": mode_a,
         "validation": strip(a),
         "test": strip(b),
         "production": {
-            "model": "trend",
-            "wape": b["selection"]["wape"],
-            "ss_multiplier": b["calibration"]["multiplier"],
-            "distribution": b["selection"]["distribution"],
-            "labels": FORECAST_MODELS,
+            "model": mode_b,
+            "mode_label": FORECAST_MODES[mode_b],
+            "wape": b["sku_wape"],
+            "ss_multiplier": b["calibration_by_mode"][mode_b]["multiplier"],
+            "distribution": {},
+            "labels": FORECAST_MODES,
         },
-        "note": "Модели обучены только на данных до даты среза. Выбор модели и калибровка запаса сделаны на окне проверки, а ошибки в строке «Эксперимент: авто-выбор» и покрытие «вне выборки» измерены на следующем окне, которое при выборе не использовалось. Авто-выбор не обыграл единую модель, поэтому в работе остаётся «сезонность + тренд»; калибровка запаса применяется.",
+        "note": "Модели обучены только на данных до даты среза. Модель для всего ассортимента и множитель запаса выбраны на окне проверки; строка «Автовыбор» и покрытие «вне выборки» измерены на следующем окне, которое при выборе не использовалось. Переключение модели по каждому артикулу проверено отдельно и отклонено: переобучается на коротких окнах.",
     }
 
 
 def format_table(res: dict[str, Any]) -> str:
     t, v = res["test"], res["validation"]
-    lines = [f"Выбор модели и калибровка: окно {', '.join(v['months'])} (срез {v['cutoff']})",
+    lines = [f"Выбор модели и калибровка: окно {', '.join(v['months'])} (срез {v['cutoff']}), выбрана: {res['selected_on_validation']}",
              f"Проверка вне выборки:     окно {', '.join(t['months'])} (срез {t['cutoff']}), склад {res['warehouse']}",
              f"Артикулов: {t['skus_evaluated']}, регулярных: {t['regular_skus']}", "",
-             f"{'Модель':46s} WAPE рег.  Bias    WAPE рег.(сырые)  WAPE нерег.  Лучшая у"]
+             f"{'Модель':62s} WAPE A  WAPE B  Bias B  B к сырым"]
     for m in res["models"]:
-        a, b, c = t["regular_vs_clean"][m], t["regular_vs_raw"][m], t["intermittent_vs_clean"][m]
-        lines.append(f"{res['labels'][m]:46s} {a['wape']!s:>7}%  {a['bias']!s:>6}%  {b['wape']!s:>12}%  {c['wape']!s:>10}%  {t['wins_regular'].get(m, '-')!s:>6}")
+        lines.append(f"{res['labels'][m]:62s} {v['regular_vs_clean'][m]['wape']!s:>6}  {t['regular_vs_clean'][m]['wape']!s:>6}  {t['regular_vs_clean'][m]['bias']!s:>6}  {t['regular_vs_raw'][m]['wape']!s:>8}")
     k = t["calibration"]
     lines += ["", f"Страховой запас (цель {k['target_pct']}%): без калибровки {k['coverage_raw_pct']}%; с множителем ×{k['multiplier_from_previous_window']} из окна проверки — {k['coverage_out_of_sample_pct']}% вне выборки",
-              f"В работе: модель «сезонность + тренд», множитель запаса ×{res['production']['ss_multiplier']} (откалиброван на последнем окне)"]
+              f"В работе: {res['production']['mode_label']}, множитель запаса ×{res['production']['ss_multiplier']} (по последнему окну)"]
     return "\n".join(lines)
 
 
