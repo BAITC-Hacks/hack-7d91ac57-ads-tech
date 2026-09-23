@@ -30,7 +30,7 @@ def _today_override():
 def get_ds() -> Dataset:
     global _ds
     if _ds is None:
-        if not (DATA_DIR / "sales.csv").exists():
+        if not (DATA_DIR / "sales.csv").exists() and DATA_DIR.name == "sample":
             from .synth import generate
 
             generate(DATA_DIR)
@@ -62,7 +62,7 @@ def ensure_result(params: Params | None = None) -> dict[str, Any]:
         if _last is not None:
             return _last
         params = _last_params or Params(warehouse=get_ds().default_warehouse())
-    key = (params.warehouse, params.category, params.service_level, params.review_days, params.include_zero)
+    key = (params.warehouse, params.category, params.service_level, params.review_days, params.include_zero, params.growth_plan_pct_year)
     with _lock:
         if key not in _cache:
             _cache[key] = run(get_ds(), params)

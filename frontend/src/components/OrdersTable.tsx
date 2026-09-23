@@ -21,6 +21,15 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [email, setEmail] = useState<{ to: string; subject: string; body: string } | null>(null);
+
+  async function showEmail(orderId: string) {
+    try {
+      setEmail(await api.orderEmail(orderId));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
 
   async function doApprove(g: SupplierGroup) {
     setBusy(true);
@@ -50,11 +59,14 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                 <span className="font-semibold">{g.supplier}</span>
               </button>
               <span className="text-sm text-zinc-500">срок поставки {g.lead_time_days} дн.</span>
-              <span className="text-sm text-zinc-500">{g.positions} поз. · {fmt(total)} шт</span>
+              <span className="text-sm text-zinc-500">{g.positions} поз. · {fmt(total)} шт{g.total_value ? ` · ≈ ${fmt(g.total_value)} ₸` : ""}</span>
               {g.critical > 0 && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">{g.critical} критичных</span>}
               <span className="ml-auto flex items-center gap-2">
                 {approved[g.supplier_id] ? (
-                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">Утверждён {approved[g.supplier_id]}</span>
+                  <>
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">Утверждён {approved[g.supplier_id]}</span>
+                    <button onClick={() => showEmail(approved[g.supplier_id])} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100">Письмо поставщику</button>
+                  </>
                 ) : (
                   <button onClick={() => setConfirm(g)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">
                     Утвердить заказ
@@ -79,6 +91,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                       <th className="px-2 py-2 text-right">В пути</th>
                       <th className="px-2 py-2 text-right">Прогноз/день</th>
                       <th className="px-2 py-2 text-right">Покрытие, дн.</th>
+                      <th className="px-2 py-2">Заказать до</th>
                       <th className="px-2 py-2 text-right">Заказать</th>
                       <th className="px-2 py-2">Срочность</th>
                       <th className="px-2 py-2"></th>
@@ -104,6 +117,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                             <td className="px-2 py-2 text-right tabular-nums">{fmt(o.in_transit)}</td>
                             <td className="px-2 py-2 text-right tabular-nums">{fmt(o.forecast_daily, 1)}</td>
                             <td className="px-2 py-2 text-right tabular-nums">{o.days_of_cover >= 999 ? "∞" : fmt(o.days_of_cover)}</td>
+                            <td className="px-2 py-2 whitespace-nowrap text-xs tabular-nums" title={o.stockout_date ? `ожидаемый дефицит ${o.stockout_date}` : ""}>{o.order_by ? o.order_by.slice(5).split("-").reverse().join(".") : "—"}</td>
                             <td className="px-2 py-2 text-right">
                               <input
                                 type="number"
@@ -128,7 +142,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                           </tr>
                           {isOpen && (
                             <tr className="border-b border-zinc-200 bg-indigo-50/40">
-                              <td colSpan={9} className="px-4 py-3">
+                              <td colSpan={10} className="px-4 py-3">
                                 <p className="text-sm leading-relaxed text-zinc-800">{o.justification}</p>
                                 <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-zinc-600 sm:grid-cols-4 lg:grid-cols-6">
                                   <Kv k="Прогноз на период" v={`${fmt(o.forecast_period_qty)} шт / ${o.lead_time_days + o.review_days} дн.`} />
@@ -139,6 +153,8 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                                   <Kv k="Исключено разовых" v={o.outliers_excluded ? `${o.outliers_excluded} шт. на ${fmt(o.outlier_qty_excluded)}` : "нет"} />
                                   <Kv k="Кратность / MOQ" v={`${o.pack_size} / ${o.moq}`} />
                                   <Kv k="Потребность до округления" v={fmt(o.raw_need)} />
+                                  <Kv k="Ожидаемый дефицит" v={o.stockout_date ?? "нет"} />
+                                  <Kv k="Сумма заказа" v={o.order_value ? `≈ ${fmt(o.order_value)} ₸` : "себестоимость неизвестна"} />
                                 </div>
                                 <button onClick={() => onOpenSku(o.sku)} className="mt-2 text-xs text-indigo-700 hover:underline">
                                   Открыть график и what-if →
@@ -156,6 +172,21 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
           </section>
         );
       })}
+
+      {email && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={() => setEmail(null)}>
+          <div className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold">Черновик письма поставщику</h3>
+            <p className="mt-1 text-xs text-zinc-500">Кому: {email.to} · Тема: {email.subject}</p>
+            <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-zinc-50 p-3 text-sm">{email.body}</pre>
+            <p className="mt-2 text-xs text-amber-800">Письмо не отправляется из сервиса: скопируйте в почту после проверки.</p>
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => navigator.clipboard?.writeText(email.body)} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm">Скопировать</button>
+              <button onClick={() => setEmail(null)} className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white">Закрыть</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirm && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={() => !busy && setConfirm(null)}>

@@ -109,6 +109,7 @@ class Params:
     outlier_z: float = 5.0
     outlier_client_share: float = 0.6
     include_zero: bool = False
+    growth_plan_pct_year: float | None = None  # business lever: planned demand growth applied to all SKUs (adds to per-SKU plan)
 
 
 # --------------------------------------------------------------------------- steps
@@ -286,7 +287,8 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         monthly = monthly.iloc[:-1]
     idx, level, growth_hist, r2 = seasonal_and_trend(monthly)
     level *= lost_uplift
-    plan_month = float(prod.get("growth_plan_pct_year", 0) or 0) / 100 / 12
+    plan_year = float(prod.get("growth_plan_pct_year", 0) or 0) + float(p.growth_plan_pct_year or 0)
+    plan_month = plan_year / 100 / 12
     growth = growth_hist + plan_month
     last_month = monthly.index[-1] if len(monthly) else pd.Period(end, freq="M")
     fc_total, fc_parts = forecast_horizon(ds.today, horizon, level, growth, idx, last_month)
@@ -330,6 +332,10 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     else:
         urgency = "normal"
 
+    stockout_date = (ds.today + timedelta(days=int(min(cover, 3650)))) if cover != float("inf") else None
+    order_by = (stockout_date - timedelta(days=lead)) if stockout_date else None
+    if order_by and order_by < ds.today:
+        order_by = ds.today
     avg_daily_raw = float(raw_daily[-90:].mean()) if len(raw_daily) else 0.0
     season_now = idx[ds.today.month]
     parts_txt = []
@@ -339,7 +345,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     if growth_hist:
         parts_txt.append(f"устойчивый тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес (R²={_fmt(r2, 2)})")
     if plan_month:
-        parts_txt.append(f"план прироста категории +{_fmt(plan_month * 1200, 0)}%/год")
+        parts_txt.append(f"план прироста {'+' if plan_month > 0 else ''}{_fmt(plan_month * 1200, 0)}%/год")
     parts_txt.append(f"→ прогноз {_fmt(fc_daily)} шт/день, на {horizon} дн. (поставка {lead} + период {review}) = {_fmt(fc_total, 0)} шт")
     if outliers:
         parts_txt.append(f"исключено {len(outliers)} разовых продаж на {_fmt(sum(o['qty'] for o in outliers), 0)} шт ({outliers[0]['reason']})")
@@ -352,7 +358,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         if rec != math.ceil(max(raw_need, 0)):
             tail += f", с учётом кратности {pack}" + (f" и MOQ {moq}" if raw_need < moq else "") + f" → {rec}"
         parts_txt.append(tail)
-        parts_txt.append(f"покрытие {_fmt(min(cover, 999), 0)} дн. при сроке поставки {lead} — {'критично' if urgency == 'critical' else 'высокий приоритет' if urgency == 'high' else 'плановый заказ'}")
+        parts_txt.append(f"покрытие {_fmt(min(cover, 999), 0)} дн. при сроке поставки {lead} — {'критично' if urgency == 'critical' else 'высокий приоритет' if urgency == 'high' else 'плановый заказ'}" + (f", заказать до {order_by.strftime('%d.%m.%Y')}" if order_by else ""))
     else:
         parts_txt.append(f"→ запаса хватает (покрытие {_fmt(min(cover, 999), 0)} дн.), заказ не требуется")
     justification = "; ".join(parts_txt) + "."
@@ -371,6 +377,10 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         "moq": moq,
         "urgency": urgency,
         "days_of_cover": round(min(cover, 999), 1),
+        "stockout_date": str(stockout_date) if stockout_date and rec > 0 else None,
+        "order_by": str(order_by) if order_by and rec > 0 else None,
+        "order_value": round(rec * float(prod.get("unit_price", 0) or 0)) if rec > 0 else 0,
+        "unit_price": float(prod.get("unit_price", 0) or 0),
         "lead_time_days": lead,
         "review_days": review,
         "service_level": sl,
@@ -435,6 +445,7 @@ def run(ds: Dataset, p: Params) -> dict[str, Any]:
             "email": str(sup.get("email", "")),
             "positions": len(sr),
             "total_qty": int(sum(r["recommended_qty"] for r in sr)),
+            "total_value": int(sum(r.get("order_value", 0) for r in sr)),
             "critical": sum(1 for r in sr if r["urgency"] == "critical"),
             "orders": sr,
         })
@@ -445,6 +456,8 @@ def run(ds: Dataset, p: Params) -> dict[str, Any]:
         "high": sum(1 for r in rows if r["urgency"] == "high"),
         "normal": sum(1 for r in rows if r["urgency"] == "normal"),
         "total_qty": int(sum(r["recommended_qty"] for r in rows)),
+        "total_value": int(sum(r.get("order_value", 0) for r in rows)),
+        "value_known_positions": sum(1 for r in rows if r.get("unit_price", 0) > 0),
         "lost_demand_total": int(sum(r["lost_demand_qty"] for r in rows)),
         "outliers_excluded_total": int(sum(r["outliers_excluded"] for r in rows)),
     }
@@ -559,3 +572,38 @@ def category_trends(ds: Dataset, warehouse: str, months: int = 12) -> dict[str, 
                     "growth_pct": round(float(np.clip(growth, -99, 999)), 1), "growth_basis": "год к году" if yoy > 0 else "к предыдущим 3 мес."})
     out.sort(key=lambda r: -r["total"])
     return {"warehouse": warehouse, "months": [str(c) for c in cols], "categories": out}
+
+
+def overstock(ds: Dataset, warehouse: str, months_threshold: float = 6.0, dead_months: int = 6) -> dict[str, Any]:
+    """Positions where stock (+in transit) covers more than N months of forecast demand, and dead stock
+    (no sales for `dead_months` months but stock on hand). Money where unit cost is known."""
+    p = Params(warehouse=warehouse, include_zero=True)
+    res = run(ds, p)
+    since = pd.Timestamp(ds.today - timedelta(days=dead_months * 30))
+    rows, dead = [], []
+    for r in res["orders"]:
+        cover_m = r["days_of_cover"] / 30.0
+        price = float(r.get("unit_price", 0) or 0)
+        tx = ds.tx(r["sku"], warehouse)
+        recent = float(tx.loc[tx["date"] >= since, "qty"].sum()) if len(tx) else 0.0
+        if r["stock"] > 0 and recent <= 0:
+            dead.append({"sku": r["sku"], "name": r["name"], "category": r["category"], "supplier": r["supplier"], "stock": r["stock"], "value": round(r["stock"] * price), "last_sale_months": dead_months})
+        elif r["stock"] > 0 and r["forecast_daily"] > 0 and cover_m >= months_threshold:
+            excess_units = max(0.0, (r["stock"] + r["in_transit"]) - r["forecast_daily"] * 30 * months_threshold)
+            rows.append({"sku": r["sku"], "name": r["name"], "category": r["category"], "supplier": r["supplier"], "stock": r["stock"], "in_transit": r["in_transit"],
+                         "forecast_daily": r["forecast_daily"], "months_of_cover": round(min(cover_m, 99), 1), "excess_units": round(excess_units), "excess_value": round(excess_units * price)})
+    rows.sort(key=lambda x: (-x["excess_value"], -x["excess_units"]))
+    dead.sort(key=lambda x: (-x["value"], -x["stock"]))
+    return {
+        "warehouse": warehouse,
+        "months_threshold": months_threshold,
+        "overstock_positions": len(rows),
+        "overstock_units": int(sum(x["excess_units"] for x in rows)),
+        "overstock_value": int(sum(x["excess_value"] for x in rows)),
+        "dead_positions": len(dead),
+        "dead_units": int(sum(x["stock"] for x in dead)),
+        "dead_value": int(sum(x["value"] for x in dead)),
+        "note": "Избыток = остаток + в пути сверх прогноза на N месяцев. Деньги по себестоимости, только там, где она известна (Systeme Electric).",
+        "overstock": rows[:200],
+        "dead": dead[:200],
+    }

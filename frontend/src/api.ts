@@ -17,6 +17,10 @@ export type Order = {
   moq: number;
   urgency: Urgency;
   days_of_cover: number;
+  stockout_date: string | null;
+  order_by: string | null;
+  order_value: number;
+  unit_price: number;
   lead_time_days: number;
   review_days: number;
   service_level: number;
@@ -48,6 +52,7 @@ export type SupplierGroup = {
   email: string;
   positions: number;
   total_qty: number;
+  total_value?: number;
   critical: number;
   orders: Order[];
 };
@@ -64,6 +69,8 @@ export type RunResult = {
     high: number;
     normal: number;
     total_qty: number;
+    total_value?: number;
+    value_known_positions?: number;
     lost_demand_total: number;
     outliers_excluded_total: number;
   };
@@ -110,6 +117,20 @@ export type Impact = {
   top: { sku: string; name: string; supplier: string; naive_qty: number; recommended_qty: number; diff_qty: number; diff_money: number; reason: string }[];
 };
 
+export type Overstock = {
+  warehouse: string;
+  months_threshold: number;
+  overstock_positions: number;
+  overstock_units: number;
+  overstock_value: number;
+  dead_positions: number;
+  dead_units: number;
+  dead_value: number;
+  note: string;
+  overstock: { sku: string; name: string; category: string; supplier: string; stock: number; in_transit: number; forecast_daily: number; months_of_cover: number; excess_units: number; excess_value: number }[];
+  dead: { sku: string; name: string; category: string; supplier: string; stock: number; value: number; last_sale_months: number }[];
+};
+
 export type CategoryTrends = {
   warehouse: string;
   months: string[];
@@ -150,9 +171,17 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export const api = {
   health: () => fetch(`${BASE}/api/health`).then((r) => j<Health>(r)),
-  run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number }) =>
+  run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number; growth_plan_pct_year?: number | null }) =>
     fetch(`${BASE}/api/replenish/run`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<RunResult>(r)),
   impact: () => fetch(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
+  overstock: (warehouse?: string) =>
+    fetch(`${BASE}/api/replenish/overstock${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<Overstock>(r)),
+  orderEmail: (orderId: string) => fetch(`${BASE}/api/orders/${encodeURIComponent(orderId)}/email`).then((r) => j<{ to: string; subject: string; body: string }>(r)),
+  importPartner: (files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return fetch(`${BASE}/api/data/import_partner`, { method: "POST", body: fd }).then((r) => j<{ imported: Record<string, unknown>; summary: Record<string, unknown> }>(r));
+  },
   categories: (warehouse?: string) =>
     fetch(`${BASE}/api/replenish/categories${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<CategoryTrends>(r)),
   sku: (sku: string, warehouse?: string) =>

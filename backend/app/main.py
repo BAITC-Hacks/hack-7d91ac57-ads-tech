@@ -17,7 +17,7 @@ from .config import get_settings
 from .ingest import extract_text
 from .llm import run_agent, tool_specs
 from .rag import store
-from .replenish import Params, category_trends, compute_sku, export_rows, impact, sku_detail
+from .replenish import Params, category_trends, compute_sku, export_rows, impact, overstock, sku_detail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 settings = get_settings()
@@ -122,6 +122,44 @@ async def data_upload(kind: str = Form(...), file: UploadFile = File(...)):
     return {"kind": kind, "rows": int(len(df)), "summary": ds.summary()}
 
 
+@app.post("/api/data/import_partner")
+async def data_import_partner(files: list[UploadFile] = File(...)):
+    """Импорт выгрузок 1С партнёра «как есть»: загрузите 12 файлов Excel (IEK и Systeme Electric).
+    Файлы раскладываются по поставщику по имени, затем вызывается тот же импортёр, что и CLI."""
+    import shutil
+    import tempfile
+
+    from .import_partner import build
+
+    tmp = Path(tempfile.mkdtemp(prefix="partner_"))
+    iek, se = tmp / "IEK", tmp / "SE"
+    iek.mkdir()
+    se.mkdir()
+    saved = {"IEK": [], "SE": []}
+    for f in files:
+        name = f.filename or "file.xlsx"
+        low = name.lower()
+        target = se if ("system" in low or "systeme" in low or "se_" in low or "сэ" in low) else iek
+        data = await f.read()
+        (target / name).write_bytes(data)
+        saved["SE" if target is se else "IEK"].append(name)
+    try:
+        out = Path("data/partner_upload")
+        if out.exists():
+            shutil.rmtree(out)
+        info = build(iek, se, out)
+    except FileNotFoundError as e:
+        raise HTTPException(400, f"не хватает файла: {e}. Нужны для каждого поставщика: MOQ, Динамика продаж, Ежемесячные продажи, Ежемесячные остатки, товар в пути (IEK: «Путь», SE: «Товар в пути»)") from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"ошибка импорта: {e}") from e
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    state.DATA_DIR = out
+    ds = state.reset_ds(regenerate=False)
+    state.precompute_in_background()
+    return {"imported": info, "files": saved, "summary": ds.summary()}
+
+
 @app.post("/api/data/reset")
 def data_reset():
     ds = state.reset_ds(regenerate=False)
@@ -135,6 +173,7 @@ class RunRequest(BaseModel):
     service_level: float | None = None
     review_days: int = 14
     include_zero: bool = False
+    growth_plan_pct_year: float | None = None  # плановый прирост спроса, %/год, ко всем позициям
 
 
 def _params(req: RunRequest) -> Params:
@@ -144,6 +183,7 @@ def _params(req: RunRequest) -> Params:
         service_level=req.service_level,
         review_days=req.review_days,
         include_zero=req.include_zero,
+        growth_plan_pct_year=req.growth_plan_pct_year,
     )
 
 
@@ -174,6 +214,13 @@ def replenish_impact():
     """Эффект относительно наивного (Excel) расчёта: избыточный и недостаточный заказ в штуках и тенге."""
     res = state.ensure_result()
     return impact(state.get_ds(), res)
+
+
+@app.get("/api/replenish/overstock")
+def replenish_overstock(warehouse: str | None = None, months: float = 6.0):
+    """Избыточные и «мёртвые» запасы: где заморожены деньги и место на складе."""
+    ds = state.get_ds()
+    return overstock(ds, warehouse or ds.default_warehouse(), months)
 
 
 @app.get("/api/replenish/categories")
@@ -253,6 +300,29 @@ def approve(req: ApproveRequest):
 @app.get("/api/orders")
 def orders_list():
     return {"orders": state.load_orders()}
+
+
+@app.get("/api/orders/{order_id}/email")
+def order_email(order_id: str):
+    """Черновик письма поставщику по утверждённому заказу. Ничего не отправляется."""
+    order = next((o for o in state.load_orders() if o["order_id"] == order_id), None)
+    if not order:
+        raise HTTPException(404, "order not found")
+    ds = state.get_ds()
+    sup = ds.suppliers.loc[ds.suppliers["supplier_id"] == order["supplier_id"]]
+    email = str(sup["email"].iloc[0]) if len(sup) and "email" in sup.columns else ""
+    lead = int(sup["lead_time_days"].iloc[0]) if len(sup) else 0
+    names = dict(zip(ds.products["sku"], ds.products["name"]))
+    arts = dict(zip(ds.products["sku"], ds.products.get("article", pd.Series(dtype=str)).fillna("")))
+    lines = "\n".join(f"{i + 1}. {l['sku']}{(' / ' + str(arts.get(l['sku']))) if arts.get(l['sku']) else ''} — {names.get(l['sku'], '')} — {l['qty']} шт" for i, l in enumerate(order["lines"]))
+    text = (
+        f"Кому: {email}\nТема: Заказ {order['order_id']} от ТОО «Электрокомплект»\n\n"
+        f"Здравствуйте!\nПросим подтвердить возможность поставки следующих позиций (ожидаемый срок поставки {lead} дн.):\n{lines}\n\n"
+        f"Итого позиций: {len(order['lines'])}, количество: {order['total_qty']}.\n"
+        + (f"Комментарий: {order['comment']}\n" if order.get("comment") else "")
+        + "\nС уважением, отдел закупа ТОО «Электрокомплект»"
+    )
+    return {"order_id": order_id, "to": email, "subject": f"Заказ {order['order_id']} от ТОО «Электрокомплект»", "body": text, "sent": False}
 
 
 # ------------------------------------------------------------------ export

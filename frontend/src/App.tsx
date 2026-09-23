@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, fmt, type CategoryTrends, type Health, type Impact, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
+import { api, fmt, type CategoryTrends, type Health, type Impact, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
@@ -11,6 +11,10 @@ export default function App() {
   const [category, setCategory] = useState<string>("");
   const [serviceLevel, setServiceLevel] = useState<string>("");
   const [reviewDays, setReviewDays] = useState<number>(14);
+  const [growthPlan, setGrowthPlan] = useState<string>("");
+  const [over, setOver] = useState<Overstock | null>(null);
+  const [showOver, setShowOver] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [urgencyFilter, setUrgencyFilter] = useState<Urgency | "">("");
   const [search, setSearch] = useState("");
   const [result, setResult] = useState<RunResult | null>(null);
@@ -62,12 +66,13 @@ export default function App() {
     setRunning(true);
     setRunErr(null);
     try {
-      const r = await api.run({ warehouse: warehouse || null, category: category || null, service_level: serviceLevel ? Number(serviceLevel) : null, review_days: reviewDays });
+      const r = await api.run({ warehouse: warehouse || null, category: category || null, service_level: serviceLevel ? Number(serviceLevel) : null, review_days: reviewDays, growth_plan_pct_year: growthPlan ? Number(growthPlan) : null });
       setResult(r);
       setQtyEdits({});
       setApproved({});
       api.impact().then(setImpact).catch(() => setImpact(null));
       api.categories(warehouse || undefined).then(setTrends).catch(() => setTrends(null));
+      api.overstock(warehouse || undefined).then(setOver).catch(() => setOver(null));
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
@@ -101,6 +106,25 @@ export default function App() {
       setWhatIfRes({ scenario_qty: r.scenario.recommended_qty, base_qty: r.base.recommended_qty, delta: r.delta_qty, justification: r.scenario.justification });
     } catch (e) {
       setWhatIfRes({ scenario_qty: 0, base_qty: 0, delta: 0, justification: `Ошибка: ${(e as Error).message}` });
+    }
+  }
+
+  async function onImportPartner(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setImporting(true);
+    setUploadMsg(`импорт ${files.length} файлов 1С…`);
+    try {
+      const r = await api.importPartner(files);
+      const info = r.imported as Record<string, number | string>;
+      setUploadMsg(`Импортировано: ${info.products} артикулов, ${info.sales_rows} строк продаж, ${info.in_transit} поз. в пути. Идёт предрасчёт, затем нажмите «Рассчитать».`);
+      setResult(null);
+      setHealth(await api.health());
+    } catch (err) {
+      setUploadMsg(`Ошибка импорта: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+      e.target.value = "";
     }
   }
 
@@ -154,6 +178,10 @@ export default function App() {
           </div>
           <div className="ml-auto flex items-center gap-2 text-xs">
             <span className="text-zinc-500">Утверждённых заказов: {approvedCount}</span>
+            <label className="cursor-pointer rounded-lg bg-zinc-800 px-2.5 py-1.5 text-white hover:bg-zinc-700" title="Загрузите 12 файлов Excel выгрузки 1С (IEK и Systeme Electric) как есть">
+              {importing ? "импорт…" : "Импорт выгрузок 1С (xlsx)"}
+              <input type="file" accept=".xlsx" multiple className="hidden" onChange={onImportPartner} disabled={importing} />
+            </label>
             <label className="cursor-pointer rounded-lg border border-zinc-300 px-2.5 py-1.5 text-zinc-700 hover:bg-zinc-50">
               Загрузить CSV
               <select className="ml-1 bg-transparent text-zinc-500" onChange={() => undefined} defaultValue="sales" id="upload-kind" onClick={(e) => e.stopPropagation()}>
@@ -202,6 +230,9 @@ export default function App() {
                 ))}
               </select>
             </Field>
+            <Field label="Плановый прирост, %/год">
+              <input type="number" value={growthPlan} onChange={(e) => setGrowthPlan(e.target.value)} placeholder="0" className="w-24 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
+            </Field>
             <button onClick={run} disabled={running || !health} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
               {running ? "Считаю…" : "Рассчитать"}
             </button>
@@ -228,6 +259,55 @@ export default function App() {
                 <Stat label="Исключено разовых продаж" value={fmt(result.summary.outliers_excluded_total)} />
                 <Stat label="Учтён упущенный спрос" value={`${fmt(result.summary.lost_demand_total)} шт`} />
               </section>
+              {!!result.summary.total_value && (
+                <p className="text-sm text-zinc-600">Сумма заказов по себестоимости ≈ <b>{fmt(result.summary.total_value)} ₸</b> (известна для {result.summary.value_known_positions} из {result.summary.positions} позиций).</p>
+              )}
+
+              {over && (over.overstock_positions > 0 || over.dead_positions > 0) && (
+                <section className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+                  <button onClick={() => setShowOver(!showOver)} className="flex w-full flex-wrap items-baseline justify-between gap-2 text-left">
+                    <h2 className="text-sm font-semibold">Избыточные и «мёртвые» запасы: не заказывать, разгружать</h2>
+                    <span className="text-sm text-zinc-700">
+                      покрытие &gt; {over.months_threshold} мес.: <b>{over.overstock_positions}</b> поз., {fmt(over.overstock_units)} шт{over.overstock_value ? ` (≈ ${fmt(over.overstock_value)} ₸)` : ""} · без продаж 6 мес.: <b>{over.dead_positions}</b> поз., {fmt(over.dead_units)} шт{over.dead_value ? ` (≈ ${fmt(over.dead_value)} ₸)` : ""}
+                    </span>
+                    <span className="text-xs text-zinc-500">{showOver ? "свернуть" : "показать"}</span>
+                  </button>
+                  {showOver && (
+                    <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                      <div>
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Избыток (топ-10)</h3>
+                        <table className="mt-1 w-full text-xs">
+                          <tbody>
+                            {over.overstock.slice(0, 10).map((r) => (
+                              <tr key={r.sku} className="border-t border-amber-100">
+                                <td className="py-1 pr-2 font-mono"><button className="text-indigo-700 hover:underline" onClick={() => openSku(r.sku)}>{r.sku}</button></td>
+                                <td className="max-w-[260px] truncate py-1 pr-2" title={r.name}>{r.name}</td>
+                                <td className="py-1 pr-2 text-right tabular-nums">{r.months_of_cover} мес.</td>
+                                <td className="py-1 text-right tabular-nums">{fmt(r.excess_units)} шт{r.excess_value ? ` · ${fmt(r.excess_value)} ₸` : ""}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Без продаж 6 месяцев (топ-10)</h3>
+                        <table className="mt-1 w-full text-xs">
+                          <tbody>
+                            {over.dead.slice(0, 10).map((r) => (
+                              <tr key={r.sku} className="border-t border-amber-100">
+                                <td className="py-1 pr-2 font-mono"><button className="text-indigo-700 hover:underline" onClick={() => openSku(r.sku)}>{r.sku}</button></td>
+                                <td className="max-w-[260px] truncate py-1 pr-2" title={r.name}>{r.name}</td>
+                                <td className="py-1 text-right tabular-nums">{fmt(r.stock)} шт{r.value ? ` · ${fmt(r.value)} ₸` : ""}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-xs text-zinc-500 lg:col-span-2">{over.note}</p>
+                    </div>
+                  )}
+                </section>
+              )}
 
               {impact && (
                 <section className="rounded-xl border border-zinc-200 bg-white p-4">
