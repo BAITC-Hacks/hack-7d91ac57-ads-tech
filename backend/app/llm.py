@@ -88,8 +88,8 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
     history: list[dict[str, Any]] = ([{"role": "system", "content": system}] if system else []) + list(messages)
     steps: list[dict[str, Any]] = []
 
-    if s.demo_mode:
-        # No LLM available: still exercise the tools so reviewers see a real result.
+    if s.demo_mode or not s.llm_api_key:
+        # No LLM available (DEMO_MODE or no key): still exercise the tools so reviewers see a real result.
         user_text = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
         import re
 
@@ -112,12 +112,16 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
     client = _client()
     specs = tool_specs()
     for _ in range(s.llm_max_tool_rounds):
-        resp = await client.chat.completions.create(
-            model=s.llm_model,
-            messages=history,
-            temperature=s.llm_temperature,
-            tools=specs or None,
-        )
+        try:
+            resp = await client.chat.completions.create(
+                model=s.llm_model,
+                messages=history,
+                temperature=s.llm_temperature,
+                tools=specs or None,
+            )
+        except Exception as e:  # noqa: BLE001 — never turn an LLM outage into a 500
+            log.exception("LLM call failed")
+            return {"answer": f"LLM недоступен ({type(e).__name__}). Включите DEMO_MODE=true или проверьте LLM_API_KEY. Расчёт и экспорт работают без LLM.", "steps": steps, "messages": history}
         msg = resp.choices[0].message
         history.append(msg.model_dump(exclude_none=True))
         if not msg.tool_calls:

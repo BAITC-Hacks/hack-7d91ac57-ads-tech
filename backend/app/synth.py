@@ -113,10 +113,13 @@ def generate(out_dir: Path, seed: int = SEED) -> dict[str, int]:
             d += timedelta(days=1)
 
     oneoffs = []
-    for s in outlier_skus:
+    for k, s in enumerate(outlier_skus):
         n = int(rng.integers(1, 3))
-        for _ in range(n):
-            d = START + timedelta(days=int(rng.integers(90, (END - START).days - 20)))
+        for j in range(n):
+            if k % 2 == 0 and j == 0:  # half of the SKUs: a recent tender inside the last 90 days (distorts naive averages)
+                d = END - timedelta(days=int(rng.integers(10, 80)))
+            else:
+                d = START + timedelta(days=int(rng.integers(90, (END - START).days - 20)))
             mult = float(rng.uniform(12, 30))
             oneoffs.append((s, d, mult, f"C{int(rng.integers(150, 200)):03d}"))
 
