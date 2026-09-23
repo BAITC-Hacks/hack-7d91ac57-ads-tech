@@ -71,12 +71,24 @@ def ensure_result(params: Params | None = None) -> dict[str, Any]:
     return _last
 
 
+def full_result(params: Params) -> dict[str, Any]:
+    """The include_zero variant of a run (all positions), cached like ensure_result but without touching _last."""
+    p = Params(**{**params.__dict__, "include_zero": True})
+    key = (p.warehouse, p.category, p.service_level, p.review_days, True, p.growth_plan_pct_year)
+    with _lock:
+        if key not in _cache:
+            _cache[key] = run(get_ds(), p)
+        return _cache[key]
+
+
 def precompute_in_background() -> None:
     """Warm the default calculation at startup so the first UI request is instant (partner data: ~40 s)."""
 
     def _job():
         try:
-            ensure_result(Params(warehouse=get_ds().default_warehouse()))
+            wh = get_ds().default_warehouse()
+            ensure_result(Params(warehouse=wh))
+            full_result(Params(warehouse=wh))
         except Exception:  # noqa: BLE001
             import logging
 

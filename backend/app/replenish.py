@@ -514,11 +514,12 @@ def naive_need(ds: Dataset, sku: str, warehouse: str, horizon: int, window_days:
     return mean_daily * horizon - stock - in_transit
 
 
-def impact(ds: Dataset, result: dict[str, Any]) -> dict[str, Any]:
+def impact(ds: Dataset, result: dict[str, Any], full: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compare engine recommendations with the naive baseline, in units and money, over ALL positions of the
-    warehouse (including those where the engine recommends nothing but the naive method would order)."""
-    p = Params(**{**result["params"], "include_zero": True})
-    full = run(ds, p)
+    warehouse (including those where the engine recommends nothing but the naive method would order).
+    `full` is the include_zero run (cached by the caller); computed here if not given."""
+    if full is None:
+        full = run(ds, Params(**{**result["params"], "include_zero": True}))
     rows = []
     excess_qty = deficit_qty = excess_money = deficit_money = 0.0
     prices = dict(zip(ds.products["sku"], ds.products.get("unit_price", pd.Series(dtype=float)).fillna(0)))
@@ -574,11 +575,11 @@ def category_trends(ds: Dataset, warehouse: str, months: int = 12) -> dict[str, 
     return {"warehouse": warehouse, "months": [str(c) for c in cols], "categories": out}
 
 
-def overstock(ds: Dataset, warehouse: str, months_threshold: float = 6.0, dead_months: int = 6) -> dict[str, Any]:
+def overstock(ds: Dataset, warehouse: str, months_threshold: float = 6.0, dead_months: int = 6, full: dict[str, Any] | None = None) -> dict[str, Any]:
     """Positions where stock (+in transit) covers more than N months of forecast demand, and dead stock
-    (no sales for `dead_months` months but stock on hand). Money where unit cost is known."""
-    p = Params(warehouse=warehouse, include_zero=True)
-    res = run(ds, p)
+    (no sales for `dead_months` months but stock on hand). Money where unit cost is known.
+    `full` is the include_zero run (cached by the caller)."""
+    res = full if full is not None else run(ds, Params(warehouse=warehouse, include_zero=True))
     since = pd.Timestamp(ds.today - timedelta(days=dead_months * 30))
     rows, dead = [], []
     for r in res["orders"]:

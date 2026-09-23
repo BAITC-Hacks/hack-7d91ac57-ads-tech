@@ -139,7 +139,7 @@ async def data_import_partner(files: list[UploadFile] = File(...)):
     for f in files:
         name = f.filename or "file.xlsx"
         low = name.lower()
-        target = se if ("system" in low or "systeme" in low or "se_" in low or "сэ" in low) else iek
+        target = se if any(k in low for k in ("sys", "electric", "se_", "сэ", "systemelectric")) else iek
         data = await f.read()
         (target / name).write_bytes(data)
         saved["SE" if target is se else "IEK"].append(name)
@@ -213,14 +213,17 @@ def replenish_orders(supplier: str | None = None, urgency: str | None = None, wa
 def replenish_impact():
     """Эффект относительно наивного (Excel) расчёта: избыточный и недостаточный заказ в штуках и тенге."""
     res = state.ensure_result()
-    return impact(state.get_ds(), res)
+    full = state.full_result(Params(**{k: v for k, v in res["params"].items() if k != "include_zero"}))
+    return impact(state.get_ds(), res, full)
 
 
 @app.get("/api/replenish/overstock")
 def replenish_overstock(warehouse: str | None = None, months: float = 6.0):
     """Избыточные и «мёртвые» запасы: где заморожены деньги и место на складе."""
     ds = state.get_ds()
-    return overstock(ds, warehouse or ds.default_warehouse(), months)
+    wh = warehouse or ds.default_warehouse()
+    full = state.full_result(Params(warehouse=wh))
+    return overstock(ds, wh, months, full=full)
 
 
 @app.get("/api/replenish/categories")
