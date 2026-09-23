@@ -57,9 +57,16 @@ export default function Assistant({ focusSku, demoMode }: { focusSku?: string; d
           <div className="mb-1 text-xs font-semibold text-zinc-600">Шаги агента</div>
           <ul className="space-y-1">
             {steps.map((s, i) => (
-              <li key={i} className="rounded border border-zinc-200 bg-zinc-50 p-2">
-                <div className="font-mono text-xs text-brand-600">{s.tool}<span className="text-zinc-400"> {s.args}</span></div>
-                <div className="line-clamp-2 font-mono text-[11px] text-zinc-500">{s.result}</div>
+              <li key={i} className="rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <span className="text-xs font-semibold text-brand-900">{s.label ?? s.tool}</span>
+                  <span className="font-mono text-[10px] text-zinc-400">{s.tool}</span>
+                </div>
+                <div className="mt-0.5 text-[11px] leading-snug text-zinc-600">{s.summary || s.result}</div>
+                <details className="mt-0.5">
+                  <summary className="cursor-pointer text-[10px] text-zinc-400">технические данные</summary>
+                  <div className="mt-1 break-all font-mono text-[10px] text-zinc-500">{s.args} {s.result.slice(0, 400)}</div>
+                </details>
               </li>
             ))}
           </ul>

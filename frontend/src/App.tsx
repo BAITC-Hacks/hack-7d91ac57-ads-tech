@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, fmt, fmtMoney, type Backtest, type CategoryTrends, type DailyBrief, type Health, type Impact, type Order, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
+import { api, fmt, fmtMoney, type Backtest, type CategoryTrends, type DailyBrief, type Health, type Impact, type Order, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency, type User } from "./api";
+import Tour, { type TourStep } from "./components/Tour";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
@@ -17,7 +18,26 @@ const UPLOAD_KINDS: [string, string][] = [
   ["products", "Товары: sku, name, category, supplier_id, pack_size"],
 ];
 
-export default function App() {
+const TOUR_KEY = "ekt_tour_done_v1";
+const TOUR_STEPS: TourStep[] = [
+  { title: "Добро пожаловать", text: "Сервис считает, что и сколько заказать у поставщиков, и объясняет каждую цифру. Пройдём по экрану за минуту: стрелки на клавиатуре тоже работают." },
+  { sel: "[data-tour=params]", title: "Параметры расчёта", text: "Склад, категория, уровень сервиса, период между заказами и плановый прирост. По умолчанию уже стоят разумные значения." },
+  { sel: "[data-tour=calib]", title: "Калибровка страхового запаса", text: "Бэктест показал, что классическая формула обещает 95 %, а даёт 81 %. С калибровкой обещание выполняется, но заказ больше. Решение за вами." },
+  { sel: "[data-tour=run]", title: "Рассчитать", text: "Одна кнопка: очистка разовых заказов, восстановление спроса в дефиците, сезонность, тренд, страховой запас, кратность и MOQ.", action: "run" },
+  { sel: "[data-tour=stats]", title: "Сводка", text: "Сколько позиций заказать, сколько критичных, на какую сумму, насколько точен прогноз и сколько лишнего лежит на складе." },
+  { sel: "[data-tour=tabs]", title: "Разделы", text: "Заказы, точность прогноза, избытки, сравнение с Excel и тренды категорий. Главная работа во вкладке «Заказы»." },
+  { sel: "[data-tour=orders] tbody tr:first-child", title: "Строка заказа", text: "Остаток и товар в пути, прогноз в день с точкой надёжности, дни покрытия и дата, до которой нужно заказать." },
+  { sel: "[data-tour=orders] tbody tr:first-child input", title: "Количество можно поправить", text: "Рекомендацию можно изменить вручную: сервис подсветит правку и покажет исходное число." },
+  { sel: "[data-tour=orders] tbody tr:first-child td:last-child button", title: "Почему столько?", text: "Обоснование каждой цифры: прогноз, сезонность, исключённые разовые продажи, упущенный спрос, запас. Клик по артикулу откроет график и «что если»." },
+  { sel: "[data-tour=approve]", title: "Утверждение", text: "Заказ поставщику утверждает человек. Автоматически ничего не отправляется, после утверждения готов черновик письма и выгрузка для 1С." },
+  { sel: "[data-tour=assistant]", title: "Ассистент закупщика", text: "Спросите обычными словами: «почему столько?», «что если придёт ещё 200?». Ассистент отвечает только числами из расчёта и показывает свои шаги." },
+  { sel: "[data-tour=brief]", title: "Утренняя сводка агента", text: "Агент сам проходит по расчёту, дефициту и избыткам и пишет, что сделать сегодня." },
+  { sel: "[data-tour=data]", title: "Данные и импорт", text: "Откуда данные, какие допущения приняты, импорт выгрузок 1С как есть." },
+  { sel: "[data-tour=admin]", title: "Администрирование", text: "Интеграции с 1С и Bitrix24, журнал действий и пользователи.", optional: true },
+  { title: "Готово", text: "Кнопка «Обучение» в шапке запускает этот тур снова." },
+];
+
+export default function App({ user, onLogout, onAdmin }: { user: User; onLogout: () => void; onAdmin: () => void }) {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthErr, setHealthErr] = useState<string | null>(null);
   const [warehouse, setWarehouse] = useState<string>("");
@@ -52,6 +72,26 @@ export default function App() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefErr, setBriefErr] = useState<string | null>(null);
+  const [tourOn, setTourOn] = useState(false);
+
+  useEffect(() => {
+    let done = false;
+    try {
+      done = localStorage.getItem(TOUR_KEY) === "1";
+    } catch {
+      done = false;
+    }
+    if (!done) setTourOn(true);
+  }, []);
+
+  function closeTour() {
+    setTourOn(false);
+    try {
+      localStorage.setItem(TOUR_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+  }
 
   // health + polling until the startup precompute is ready
   useEffect(() => {
@@ -252,16 +292,33 @@ export default function App() {
               <span className="text-zinc-500">
                 Утверждено заказов: <b className="text-zinc-800">{approvedCount}</b>
               </span>
+              <button onClick={() => setTourOn(true)} className="rounded-md border border-zinc-300 px-3 py-1.5 font-medium text-zinc-700 hover:bg-zinc-50">
+                Обучение
+              </button>
               <button
+                data-tour="data"
                 onClick={() => setShowData(!showData)}
                 aria-expanded={showData}
                 className={`rounded-md border px-3 py-1.5 font-medium ${showData ? "border-brand-600 bg-brand-50 text-brand-900" : "border-zinc-300 text-zinc-700 hover:bg-zinc-50"}`}
               >
                 Данные и импорт
               </button>
-              <button onClick={loadBrief} disabled={briefBusy || !health} className="rounded-md bg-brand-600 px-3 py-1.5 font-semibold text-white hover:bg-brand-900 disabled:opacity-50">
+              <button data-tour="brief" onClick={loadBrief} disabled={briefBusy || !health} className="rounded-md bg-brand-600 px-3 py-1.5 font-semibold text-white hover:bg-brand-900 disabled:opacity-50">
                 {briefBusy ? "Агент работает…" : "Утренняя сводка агента"}
               </button>
+              {user.role === "admin" && (
+                <button data-tour="admin" onClick={onAdmin} className="rounded-md bg-brand-900 px-3 py-1.5 font-semibold text-white hover:bg-brand-700">
+                  Администрирование
+                </button>
+              )}
+              <span className="flex items-center gap-2 border-l border-zinc-200 pl-2">
+                <span className="text-zinc-600" title={user.username}>
+                  {user.name} · {user.role_label ?? user.role}
+                </span>
+                <button onClick={onLogout} className="rounded-md border border-zinc-300 px-2 py-1 text-zinc-700 hover:bg-zinc-50">
+                  Выйти
+                </button>
+              </span>
             </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
@@ -322,7 +379,7 @@ export default function App() {
       <main className="mx-auto grid max-w-[1500px] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-5">
           {/* parameters */}
-          <section className="rounded-md border border-zinc-200 bg-white p-4">
+          <section data-tour="params" className="rounded-md border border-zinc-200 bg-white p-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
               <Field label="Склад">
                 <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className={SELECT}>
@@ -359,7 +416,7 @@ export default function App() {
               </Field>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-zinc-100 pt-3">
-              <label className="flex items-center gap-2 text-sm text-zinc-700" title="Множитель страхового запаса подобран бэктестом так, чтобы фактическое покрытие спроса соответствовало заявленному уровню сервиса">
+              <label data-tour="calib" className="flex items-center gap-2 text-sm text-zinc-700" title="Множитель страхового запаса подобран бэктестом так, чтобы фактическое покрытие спроса соответствовало заявленному уровню сервиса">
                 <input type="checkbox" checked={ssCalibrated} onChange={(e) => setSsCalibrated(e.target.checked)} className="h-4 w-4 accent-[#2c7294]" />
                 Калибровать страховой запас по бэктесту{health?.ss_multiplier && health.ss_multiplier !== 1 ? ` (×${health.ss_multiplier.toLocaleString("ru-RU")})` : ""}
               </label>
@@ -375,7 +432,7 @@ export default function App() {
                         : ""}
               </span>
               {runErr && <span className="text-sm text-red-700">Ошибка: {runErr}</span>}
-              <button onClick={run} disabled={running || !health} className="ml-auto rounded-md bg-accent-400 px-6 py-2 text-sm font-bold text-brand-900 shadow-sm hover:bg-accent-500 disabled:opacity-50">
+              <button data-tour="run" onClick={run} disabled={running || !health} className="ml-auto rounded-md bg-accent-400 px-6 py-2 text-sm font-bold text-brand-900 shadow-sm hover:bg-accent-500 disabled:opacity-50">
                 {running ? "Считаю…" : "Рассчитать"}
               </button>
             </div>
@@ -393,7 +450,7 @@ export default function App() {
 
           {result && (
             <>
-              <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <section data-tour="stats" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label="Позиций к заказу" value={fmt(result.summary.positions)} sub={`у ${result.summary.suppliers} поставщиков · ${fmt(result.summary.total_qty)} шт`} />
                 <Stat label="Критичных" value={fmt(result.summary.critical)} tone="red" sub="запаса меньше, чем срок поставки" />
                 <Stat label="Высокий приоритет" value={fmt(result.summary.high)} tone="amber" sub="заказать в этом цикле" />
@@ -408,7 +465,7 @@ export default function App() {
                 <Stat label="Избыток на складе" value={over ? `${fmt(over.overstock_positions)} поз.` : "…"} tone="amber" sub={over ? `запас > ${over.months_threshold} мес.; ${fmt(over.dead_positions)} без продаж полгода` : "считается"} />
               </section>
 
-              <nav className="flex gap-1 overflow-x-auto border-b border-zinc-200" aria-label="Разделы">
+              <nav data-tour="tabs" className="flex gap-1 overflow-x-auto border-b border-zinc-200" aria-label="Разделы">
                 {tabs.map(([id, label, badge]) => (
                   <button
                     key={id}
@@ -634,7 +691,7 @@ export default function App() {
           )}
         </div>
 
-        <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)]">
+        <div data-tour="assistant" className="lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)]">
           <Assistant focusSku={detailSku ?? result?.orders.find((o) => o.urgency === "critical")?.sku} demoMode={health?.demo_mode ?? true} />
         </div>
       </main>
@@ -679,8 +736,11 @@ export default function App() {
                   <ul className="space-y-1">
                     {brief.steps.map((s, i) => (
                       <li key={i} className="flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
-                        <span className="font-mono text-brand-600">{s.tool}</span>
-                        <span className="flex-1 text-zinc-600">{s.result}</span>
+                        <span className="min-w-[180px]">
+                          <span className="block font-semibold text-brand-900">{s.label ?? s.tool}</span>
+                          <span className="font-mono text-[10px] text-zinc-400">{s.tool}</span>
+                        </span>
+                        <span className="flex-1 text-zinc-600">{s.summary || s.result}</span>
                         {s.ms !== undefined && <span className="text-zinc-400">{s.ms} мс</span>}
                       </li>
                     ))}
@@ -797,6 +857,7 @@ export default function App() {
           </div>
         </div>
       )}
+      {tourOn && <Tour steps={TOUR_STEPS} onClose={closeTour} onAction={(a) => a === "run" && !result && !running && run()} />}
     </div>
   );
 }

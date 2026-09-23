@@ -50,8 +50,8 @@ export default function Tour({ steps, onClose, onAction }: Props) {
       }
       el = document.querySelector(step.sel);
       if (!el) {
-        if (step.optional && tries > 2) {
-          go(i + 1);
+        if (step.optional) {
+          go(i + 1); // e.g. admin-only control for a manager: skip without flashing the card
           return;
         }
         setWaiting(true);

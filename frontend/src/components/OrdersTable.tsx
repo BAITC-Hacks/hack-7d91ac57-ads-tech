@@ -59,7 +59,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
   }
 
   return (
-    <div className="space-y-4">
+    <div data-tour="orders" className="space-y-4">
       {groups.map((g) => {
         const isOpen = open[g.supplier_id] ?? true;
         const lim = limit[g.supplier_id] ?? PAGE;
@@ -85,7 +85,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                     </button>
                   </>
                 ) : (
-                  <button onClick={() => setConfirm(g)} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-900">
+                  <button data-tour="approve" onClick={() => setConfirm(g)} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-900">
                     Утвердить заказ
                   </button>
                 )}
