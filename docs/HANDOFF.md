@@ -7,3 +7,4 @@
 - 13:55 · claude · backend: pandas/openpyxl добавлены; пишу synth.py + replenish.py; run будет к 14:10
 - 13:38 · claude · движок replenish.py считает (1.8 с на 41 позицию), эндпоинты пишу сейчас
 - 13:41 · claude · backend: run готов. Все эндпоинты API.md работают (см. таблицу изменений 14:35). Запуск: make backend. Codex: переключай моки на реальные вызовы.
+- 13:45 · claude · README v1 под кейс, verify.sh, Docker-образ с данными и тестами закоммичены. Жду фронт. Порт 8000 свободен: make backend.
