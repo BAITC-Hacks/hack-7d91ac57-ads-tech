@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, fmt, type CategoryTrends, type Health, type Impact, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
+import { api, fmt, type CategoryTrends, type DailyBrief, type Health, type Impact, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
@@ -15,6 +15,21 @@ export default function App() {
   const [over, setOver] = useState<Overstock | null>(null);
   const [showOver, setShowOver] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [brief, setBrief] = useState<DailyBrief | null>(null);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [briefErr, setBriefErr] = useState<string | null>(null);
+
+  async function loadBrief() {
+    setBriefBusy(true);
+    setBriefErr(null);
+    try {
+      setBrief(await api.dailyBrief(warehouse || undefined));
+    } catch (e) {
+      setBriefErr((e as Error).message);
+    } finally {
+      setBriefBusy(false);
+    }
+  }
   const [urgencyFilter, setUrgencyFilter] = useState<Urgency | "">("");
   const [search, setSearch] = useState("");
   const [result, setResult] = useState<RunResult | null>(null);
@@ -177,6 +192,9 @@ export default function App() {
             )}
           </div>
           <div className="ml-auto flex items-center gap-2 text-xs">
+            <button onClick={loadBrief} disabled={briefBusy || !health} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+              {briefBusy ? "агент работает…" : "Утренняя сводка агента"}
+            </button>
             <span className="text-zinc-500">Утверждённых заказов: {approvedCount}</span>
             <label className="cursor-pointer rounded-lg bg-zinc-800 px-2.5 py-1.5 text-white hover:bg-zinc-700" title="Загрузите 12 файлов Excel выгрузки 1С (IEK и Systeme Electric) как есть">
               {importing ? "импорт…" : "Импорт выгрузок 1С (xlsx)"}
@@ -391,6 +409,39 @@ export default function App() {
           <Assistant focusSku={detailSku ?? result?.orders.find((o) => o.urgency === "critical")?.sku} demoMode={health?.demo_mode ?? true} />
         </div>
       </main>
+
+      {(brief || briefErr) && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={() => { setBrief(null); setBriefErr(null); }}>
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold">Утренняя сводка агента-закупщика</h2>
+                <p className="text-xs text-zinc-500">{brief ? `${brief.generated_at} · ${brief.llm ? "текст написан LLM по фактам инструментов" : "без LLM: шаблон по фактам инструментов"}` : ""}</p>
+              </div>
+              <button onClick={() => { setBrief(null); setBriefErr(null); }} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm">Закрыть</button>
+            </div>
+            {briefErr && <p className="mt-3 text-sm text-red-700">Ошибка: {briefErr}</p>}
+            {brief && (
+              <>
+                <pre className="mt-4 whitespace-pre-wrap rounded-lg bg-zinc-50 p-4 text-sm leading-relaxed text-zinc-800">{brief.brief}</pre>
+                <div className="mt-4">
+                  <div className="mb-1 text-xs font-semibold text-zinc-600">Шаги агента</div>
+                  <ul className="space-y-1">
+                    {brief.steps.map((s, i) => (
+                      <li key={i} className="flex items-start gap-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs">
+                        <span className="font-mono text-indigo-700">{s.tool}</span>
+                        <span className="flex-1 text-zinc-600">{s.result}</span>
+                        {s.ms !== undefined && <span className="text-zinc-400">{s.ms} мс</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <p className="mt-3 text-xs text-amber-800">Агент готовит черновики и сводку; утверждение и отправка заказов остаются за менеджером.</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* SKU drawer */}
       {detailSku && (

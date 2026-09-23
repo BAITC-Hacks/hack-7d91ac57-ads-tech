@@ -70,7 +70,7 @@ def template_brief(f: dict[str, Any]) -> str:
         lines.append("2. Уже в дефиците (остаток 0, в пути 0), продажи теряются каждый день: " + "; ".join(f"{z['sku']} {z['name'][:40]} — заказать {_fmt(z['recommended_qty'])} шт ({z['supplier']})" for z in f["zero_stock"]) + ".")
     else:
         lines.append("2. Позиций с нулевым остатком без поставки нет.")
-    lines.append(f"3. Разместить на этой неделе: {f['due_this_week']} позиций. Ближайшие: " + ("; ".join(f"{d['sku']} до {d['order_by'][5:].replace('-', '.')} — {_fmt(d['recommended_qty'])} шт" for d in f["top_due"][:5]) if f["top_due"] else "нет") + ".")
+    lines.append(f"3. Разместить на этой неделе: {f['due_this_week']} позиций. Ближайшие: " + ("; ".join(f"{d['sku']} до {'.'.join(reversed(d['order_by'][5:].split('-')))} — {_fmt(d['recommended_qty'])} шт" for d in f["top_due"][:5]) if f["top_due"] else "нет") + ".")
     lines.append("4. По поставщикам: " + "; ".join(f"{sp['supplier']}: {sp['positions']} поз., {_fmt(sp['total_qty'])} шт, критичных {sp['critical']}, срок {sp['lead_time_days']} дн." for sp in f["suppliers"]) + ".")
     o = f["overstock"]
     lines.append(f"5. Не заказывать и разгружать: {o['overstock_positions']} позиций с покрытием > 6 мес. ({_fmt(o['overstock_units'])} шт" + (f", ≈ {_fmt(o['overstock_value'])} ₸" if o["overstock_value"] else "") + f"), {o['dead_positions']} позиций без продаж полгода ({_fmt(o['dead_units'])} шт" + (f", ≈ {_fmt(o['dead_value'])} ₸" if o["dead_value"] else "") + ").")

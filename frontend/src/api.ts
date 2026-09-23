@@ -137,7 +137,8 @@ export type CategoryTrends = {
   categories: { category: string; months: string[]; qty: number[]; total: number; growth_pct: number; growth_basis: string }[];
 };
 
-export type ChatStep = { tool: string; args: string; result: string };
+export type ChatStep = { tool: string; args: string; result: string; ms?: number };
+export type DailyBrief = { brief: string; facts: Record<string, unknown>; steps: ChatStep[]; llm: boolean; generated_at: string };
 export type ChatResponse = { answer: string; steps: ChatStep[]; latency_ms: number };
 export type Msg = { role: "user" | "assistant"; content: string };
 
@@ -176,6 +177,8 @@ export const api = {
   impact: () => fetch(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
   overstock: (warehouse?: string) =>
     fetch(`${BASE}/api/replenish/overstock${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<Overstock>(r)),
+  dailyBrief: (warehouse?: string) =>
+    fetch(`${BASE}/api/agent/daily-brief${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<DailyBrief>(r)),
   orderEmail: (orderId: string) => fetch(`${BASE}/api/orders/${encodeURIComponent(orderId)}/email`).then((r) => j<{ to: string; subject: string; body: string }>(r)),
   importPartner: (files: File[]) => {
     const fd = new FormData();
