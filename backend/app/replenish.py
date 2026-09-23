@@ -135,13 +135,15 @@ def detect_outliers(tx: pd.DataFrame, z_thr: float, client_share_thr: float) -> 
     tx["month"] = tx["date"].dt.to_period("M")
     monthly = tx.groupby("month")["qty"].sum()
     med_month = float(monthly.median()) if len(monthly) else 0
-    by_client = tx.groupby(["month", "client_id"])["qty"].sum()
+    by_client = tx[tx["client_id"].astype(str) != "MONTHLY"].groupby(["month", "client_id"])["qty"].sum()
     for (mth, client), q in by_client.items():
         tot = monthly[mth]
         if tot > 0 and q / tot >= client_share_thr and tot > 2 * med_month and q > 8 * typical:
             mask = (tx["month"] == mth) & (tx["client_id"] == client) & (tx["qty"] > typical)
             tx.loc[mask & ~tx["is_outlier"], "reason"] = f"{q / tot:.0%} спроса месяца одним клиентом"
             tx.loc[mask, "is_outlier"] = True
+    # back-filled monthly averages (import_partner, client_id == "MONTHLY") are never one-off orders
+    tx.loc[tx["client_id"].astype(str) == "MONTHLY", ["is_outlier", "reason"]] = [False, ""]
     tx["qty_clean"] = np.where(tx["is_outlier"], np.minimum(tx["qty"], typical), tx["qty"])
     reasons = [
         {"date": str(r.date.date()), "qty": int(r.qty), "client_id": str(r.client_id), "reason": r.reason}

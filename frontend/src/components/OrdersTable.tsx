@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { api, fmt, URGENCY_CLASS, URGENCY_LABEL, type Order, type SupplierGroup } from "../api";
 
 type Props = {
@@ -88,8 +88,8 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                     {g.orders.map((o) => {
                       const isOpen = expanded === o.sku;
                       return (
-                        <>
-                          <tr key={o.sku} className={`border-b border-zinc-100 hover:bg-zinc-50 ${isOpen ? "bg-indigo-50/40" : ""}`}>
+                        <Fragment key={o.sku}>
+                          <tr className={`border-b border-zinc-100 hover:bg-zinc-50 ${isOpen ? "bg-indigo-50/40" : ""}`}>
                             <td className="px-4 py-2 font-mono text-xs">
                               <button className="text-indigo-700 hover:underline" onClick={() => onOpenSku(o.sku)} title="Открыть график и детали">
                                 {o.sku}
@@ -127,7 +127,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                             </td>
                           </tr>
                           {isOpen && (
-                            <tr key={`${o.sku}-x`} className="border-b border-zinc-200 bg-indigo-50/40">
+                            <tr className="border-b border-zinc-200 bg-indigo-50/40">
                               <td colSpan={9} className="px-4 py-3">
                                 <p className="text-sm leading-relaxed text-zinc-800">{o.justification}</p>
                                 <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-zinc-600 sm:grid-cols-4 lg:grid-cols-6">
@@ -146,7 +146,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                               </td>
                             </tr>
                           )}
-                        </>
+                        </Fragment>
                       );
                     })}
                   </tbody>
