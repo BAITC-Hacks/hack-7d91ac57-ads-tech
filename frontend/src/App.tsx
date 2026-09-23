@@ -6,6 +6,7 @@ import SignalsTab from "./components/SignalsTab";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
+import Dashboard, { Sparkle } from "./components/Dashboard";
 
 type Tab = "orders" | "signals" | "news" | "accuracy" | "overstock" | "impact" | "trends";
 type SortKey = "urgency" | "value" | "qty" | "cover";
@@ -26,6 +27,7 @@ const TOUR_STEPS: TourStep[] = [
   { sel: "[data-tour=params]", title: "Параметры расчёта", text: "Склад, категория, уровень сервиса, период между заказами и плановый прирост. По умолчанию уже стоят разумные значения." },
   { sel: "[data-tour=calib]", title: "Калибровка страхового запаса", text: "Бэктест показал, что классическая формула обещает 95 %, а даёт 81 %. С калибровкой обещание выполняется, но заказ больше. Решение за вами." },
   { sel: "[data-tour=run]", title: "Рассчитать", text: "Одна кнопка: очистка разовых заказов, восстановление спроса в дефиците, сезонность, тренд, страховой запас, кратность и MOQ.", action: "run" },
+  { sel: "[data-tour=viz]", title: "Всё на графиках", text: "После расчёта появляется эта кнопка: весь отчёт на одном экране — когда заказывать, срочность, поставщики, категории, точность, избытки и тренды.", optional: true },
   { sel: "[data-tour=stats]", title: "Сводка", text: "Сколько позиций заказать, сколько критичных, на какую сумму, насколько точен прогноз и сколько лишнего лежит на складе." },
   { sel: "[data-tour=tabs]", title: "Разделы", text: "Заказы, сигналы продаж из чатов менеджеров, рынок и СМИ, точность прогноза, избытки, сравнение с Excel и тренды. Главная работа во вкладке «Заказы»." },
   { sel: "[data-tour=orders] tbody tr:first-child", title: "Строка заказа", text: "Остаток и товар в пути, прогноз в день с точкой надёжности, дни покрытия и дата, до которой нужно заказать." },
@@ -76,6 +78,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefErr, setBriefErr] = useState<string | null>(null);
   const [tourOn, setTourOn] = useState(false);
+  const [showViz, setShowViz] = useState(false);
 
   useEffect(() => {
     let done = false;
@@ -459,6 +462,15 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
 
           {result && (
             <>
+              <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3">
+                <div className="min-w-0 text-sm text-zinc-700">
+                  <b className="text-brand-900">Отчёт готов.</b> {fmt(result.summary.positions)} позиций, {fmt(result.summary.critical)} критичных: посмотрите всё сразу на графиках.
+                </div>
+                <button data-tour="viz" onClick={() => setShowViz(true)} className="ai-btn flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold text-white">
+                  <Sparkle className="h-4 w-4" />
+                  Показать всё на графиках
+                </button>
+              </section>
               <section data-tour="stats" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label="Позиций к заказу" value={fmt(result.summary.positions)} sub={`у ${result.summary.suppliers} поставщиков · ${fmt(result.summary.total_qty)} шт`} />
                 <Stat label="Критичных" value={fmt(result.summary.critical)} tone="red" sub="запаса меньше, чем срок поставки" />
@@ -877,6 +889,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
           </div>
         </div>
       )}
+      {showViz && result && <Dashboard result={result} bt={bt} over={over} impact={impact} trends={trends} onClose={() => setShowViz(false)} onOpenSku={openSku} />}
       {tourOn && <Tour steps={TOUR_STEPS} onClose={closeTour} onAction={(a) => a === "run" && !result && !running && run()} />}
     </div>
   );
