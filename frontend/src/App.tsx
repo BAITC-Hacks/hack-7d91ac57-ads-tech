@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, fmt, type Health, type Impact, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
+import { api, fmt, type CategoryTrends, type Health, type Impact, type RunResult, type SkuDetail, type SupplierGroup, type Urgency } from "./api";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
@@ -15,6 +15,8 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [result, setResult] = useState<RunResult | null>(null);
   const [impact, setImpact] = useState<Impact | null>(null);
+  const [trends, setTrends] = useState<CategoryTrends | null>(null);
+  const [showTrends, setShowTrends] = useState(false);
   const [running, setRunning] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [qtyEdits, setQtyEdits] = useState<Record<string, number>>({});
@@ -65,6 +67,7 @@ export default function App() {
       setQtyEdits({});
       setApproved({});
       api.impact().then(setImpact).catch(() => setImpact(null));
+      api.categories(warehouse || undefined).then(setTrends).catch(() => setTrends(null));
     } catch (e) {
       setRunErr((e as Error).message);
     } finally {
@@ -241,6 +244,39 @@ export default function App() {
                 </section>
               )}
 
+              {trends && trends.categories.length > 0 && (
+                <section className="rounded-xl border border-zinc-200 bg-white p-4">
+                  <button onClick={() => setShowTrends(!showTrends)} className="flex w-full items-center justify-between text-left">
+                    <h2 className="text-sm font-semibold">Тренды спроса по категориям, последние {trends.months.length} мес.</h2>
+                    <span className="text-xs text-zinc-500">{showTrends ? "свернуть" : "показать"}</span>
+                  </button>
+                  {showTrends && (
+                    <table className="mt-3 w-full text-sm">
+                      <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
+                        <tr>
+                          <th className="py-1">Категория</th>
+                          <th className="py-1">Динамика</th>
+                          <th className="py-1 text-right">Всего, шт</th>
+                          <th className="py-1 text-right">Рост</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trends.categories.slice(0, 12).map((c) => (
+                          <tr key={c.category} className="border-t border-zinc-100">
+                            <td className="py-1.5 pr-3">{c.category}</td>
+                            <td className="py-1.5"><Sparkline values={c.qty} /></td>
+                            <td className="py-1.5 text-right tabular-nums">{fmt(c.total)}</td>
+                            <td className={`py-1.5 text-right tabular-nums ${c.growth_pct > 5 ? "text-emerald-700" : c.growth_pct < -5 ? "text-red-700" : "text-zinc-600"}`} title={c.growth_basis}>
+                              {c.growth_pct > 0 ? "+" : ""}{fmt(c.growth_pct, 1)} %
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </section>
+              )}
+
               {/* list filters */}
               <section className="flex flex-wrap items-center gap-2">
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по артикулу или названию" className="w-72 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm" />
@@ -369,6 +405,18 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const w = 160;
+  const h = 28;
+  const max = Math.max(1, ...values);
+  const pts = values.map((v, i) => `${(i / Math.max(1, values.length - 1)) * (w - 2) + 1},${h - 1 - (v / max) * (h - 4)}`).join(" ");
+  return (
+    <svg width={w} height={h} className="block">
+      <polyline points={pts} fill="none" stroke="#4f46e5" strokeWidth={1.5} />
+    </svg>
   );
 }
 

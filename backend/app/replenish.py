@@ -534,3 +534,28 @@ def impact(ds: Dataset, result: dict[str, Any]) -> dict[str, Any]:
         "note": "Наивный (Excel) расчёт: среднее сырых продаж за последние 90 дней × горизонт − остаток − в пути; без очистки выбросов, компенсации дефицита, сезонности и страхового запаса.",
         "top": rows[:15],
     }
+
+
+def category_trends(ds: Dataset, warehouse: str, months: int = 12) -> dict[str, Any]:
+    """Monthly demand by category (raw sales, back-filled months included) for the last N full months,
+    with growth = last 3 months vs the same 3 months a year earlier (when available) or vs previous 3 months."""
+    sales = ds.sales[ds.sales["warehouse"] == warehouse]
+    cat_of = dict(zip(ds.products["sku"], ds.products["category"]))
+    m = sales.assign(month=sales["date"].dt.to_period("M"), category=sales["sku"].map(cat_of)).dropna(subset=["category"])
+    last_full = pd.Period(ds.today, "M") - 1
+    piv = m.groupby(["category", "month"])["qty"].sum().unstack(fill_value=0.0)
+    cols = [last_full - k for k in range(months - 1, -1, -1)]
+    piv = piv.reindex(columns=cols, fill_value=0.0)
+    out = []
+    for cat, row in piv.iterrows():
+        vals = [float(v) for v in row.values]
+        last3 = sum(vals[-3:])
+        prev3 = sum(vals[-6:-3])
+        yoy_cols = [c - 12 for c in cols[-3:]]
+        full = m[m["category"] == cat].groupby("month")["qty"].sum()
+        yoy = float(sum(full.get(c, 0.0) for c in yoy_cols))
+        growth = ((last3 / yoy - 1) * 100) if yoy > 0 else ((last3 / prev3 - 1) * 100 if prev3 > 0 else 0.0)
+        out.append({"category": str(cat), "months": [str(c) for c in cols], "qty": [round(v) for v in vals], "total": round(sum(vals)),
+                    "growth_pct": round(float(np.clip(growth, -99, 999)), 1), "growth_basis": "год к году" if yoy > 0 else "к предыдущим 3 мес."})
+    out.sort(key=lambda r: -r["total"])
+    return {"warehouse": warehouse, "months": [str(c) for c in cols], "categories": out}

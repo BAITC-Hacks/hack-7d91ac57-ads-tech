@@ -17,7 +17,7 @@ from .config import get_settings
 from .ingest import extract_text
 from .llm import run_agent, tool_specs
 from .rag import store
-from .replenish import Params, compute_sku, export_rows, impact, sku_detail
+from .replenish import Params, category_trends, compute_sku, export_rows, impact, sku_detail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 settings = get_settings()
@@ -174,6 +174,13 @@ def replenish_impact():
     """Эффект относительно наивного (Excel) расчёта: избыточный и недостаточный заказ в штуках и тенге."""
     res = state.ensure_result()
     return impact(state.get_ds(), res)
+
+
+@app.get("/api/replenish/categories")
+def replenish_categories(warehouse: str | None = None, months: int = 12):
+    """Тренды спроса по категориям за последние N полных месяцев (опциональный пункт ТЗ)."""
+    ds = state.get_ds()
+    return category_trends(ds, warehouse or ds.default_warehouse(), months)
 
 
 @app.get("/api/sku/{sku}")

@@ -110,6 +110,12 @@ export type Impact = {
   top: { sku: string; name: string; supplier: string; naive_qty: number; recommended_qty: number; diff_qty: number; diff_money: number; reason: string }[];
 };
 
+export type CategoryTrends = {
+  warehouse: string;
+  months: string[];
+  categories: { category: string; months: string[]; qty: number[]; total: number; growth_pct: number; growth_basis: string }[];
+};
+
 export type ChatStep = { tool: string; args: string; result: string };
 export type ChatResponse = { answer: string; steps: ChatStep[]; latency_ms: number };
 export type Msg = { role: "user" | "assistant"; content: string };
@@ -147,6 +153,8 @@ export const api = {
   run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number }) =>
     fetch(`${BASE}/api/replenish/run`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<RunResult>(r)),
   impact: () => fetch(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
+  categories: (warehouse?: string) =>
+    fetch(`${BASE}/api/replenish/categories${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<CategoryTrends>(r)),
   sku: (sku: string, warehouse?: string) =>
     fetch(`${BASE}/api/sku/${encodeURIComponent(sku)}${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<SkuDetail>(r)),
   whatif: (body: { sku: string; warehouse?: string; in_transit?: number | null; stock?: number | null; lead_time_days?: number | null; service_level?: number | null }) =>

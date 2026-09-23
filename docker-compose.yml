@@ -6,6 +6,8 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - backend_data:/app/data
+      # Данные партнёра (не в репозитории): раскомментируйте и задайте DATA_DIR=data/partner в .env
+      # - ./backend/data/partner:/app/data/partner:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s

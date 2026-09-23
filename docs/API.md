@@ -51,6 +51,9 @@ Base URL в dev: `/api` (Vite проксирует на `http://localhost:8000`)
  "note":"...","top":[{"sku":"KBL-001","name":"...","supplier":"...","naive_qty":900,"recommended_qty":600,"diff_qty":300,"diff_money":150000,"reason":"выброс|дефицит|сезон/тренд/страховой"}]}
 ```
 
+## GET /api/replenish/categories?warehouse=…&months=12
+Тренды спроса по категориям (опц. пункт ТЗ). `{"warehouse":"…","months":["2025-10",…],"categories":[{"category":"Автоматы","months":[…],"qty":[…12 чисел…],"total":12345,"growth_pct":8.4,"growth_basis":"год к году"}]}`
+
 ## GET /api/sku/{sku}?warehouse=Главный
 Данные для графика по артикулу.
 ```json
