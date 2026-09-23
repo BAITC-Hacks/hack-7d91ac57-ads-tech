@@ -568,7 +568,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
                                 <tr key={m} className={`border-t border-zinc-100 ${ours ? "bg-brand-50 font-semibold text-brand-900" : ""}`}>
                                   <td className="py-1.5 pr-2">
                                     {bt.labels[m]}
-                                    {inWork && <span className="ml-1.5 rounded bg-accent-400 px-1.5 py-0.5 text-[10px] font-bold text-brand-900">в работе</span>}
+                                    {inWork && <span className="ml-1.5 inline-block whitespace-nowrap rounded bg-accent-400 px-1.5 py-0.5 align-middle text-[10px] font-bold leading-none text-brand-900">в работе</span>}
                                   </td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums">{fmt(a.wape, 1)} %</td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums">{a.bias != null && a.bias > 0 ? "+" : ""}{fmt(a.bias, 1)} %</td>

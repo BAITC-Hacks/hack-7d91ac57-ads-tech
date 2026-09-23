@@ -1,0 +1,16 @@
+# Деплой на Brev-инстанс рядом с vLLM (контейнер `llm` на :8000 хоста).
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.brev.yml up -d --build
+services:
+  backend:
+    ports: !reset []
+    volumes: !override
+      - ./backend/data:/app/data
+    environment:
+      DATA_DIR: data/partner
+      LLM_BASE_URL: http://host.docker.internal:8000/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  frontend:
+    restart: unless-stopped
