@@ -106,6 +106,7 @@ class Dataset:
     model_choice: dict | None = None
     model_wape: dict | None = None
     ss_multiplier: float = 1.0
+    signals: dict | None = None  # sku → sales signals from managers' chats (app.signals)
 
     def tx(self, sku: str, warehouse: str) -> pd.DataFrame:
         """Transactions for one SKU/warehouse, from a cached groupby (2 700 SKUs × 250 k rows otherwise)."""
@@ -147,6 +148,7 @@ class Params:
     include_zero: bool = False
     growth_plan_pct_year: float | None = None  # business lever: planned demand growth applied to all SKUs (adds to per-SKU plan)
     ss_calibrated: bool = True  # apply the backtest-calibrated safety-stock multiplier
+    include_signals: bool = False  # add probability-weighted project demand from sales signals
 
 
 # --------------------------------------------------------------------------- steps
@@ -364,6 +366,15 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     fc_total = float(np.nan_to_num(fc_total))
     safety = float(np.nan_to_num(safety))
     raw_need = fc_total + safety - stock - in_transit
+    # sales signals (managers' chats): project demand expected within the horizon, weighted by probability
+    horizon_end = pd.Period(ds.today + timedelta(days=horizon), "M")
+    now_p = pd.Period(ds.today, "M")
+    sig_all = (ds.signals or {}).get(sku, [])
+    sig_active = [x for x in sig_all if x.get("type") in ("крупный разовый заказ", "регулярный рост") and x.get("weighted_qty")
+                  and (not x.get("expected_month") or now_p <= pd.Period(x["expected_month"], "M") <= horizon_end)]
+    signal_qty = float(sum(x["weighted_qty"] for x in sig_active))
+    if p.include_signals and signal_qty > 0:
+        raw_need += signal_qty
     pack = int(prod.get("pack_size", 1) or 1)
     moq = int(prod.get("moq") or 0) if "moq" in prod.index and pd.notna(prod.get("moq")) else int(sup.get("moq", 0) or 0)
     if raw_need <= 0:
@@ -407,6 +418,8 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     if lost:
         parts_txt.append(f"в {stockout_days} дн. дефицита учтён упущенный спрос {_fmt(lost, 0)} шт" + (f" (+{_fmt((lost_uplift - 1) * 100)}% к уровню за год)" if lost_uplift > 1.001 else ""))
     parts_txt.append(f"страховой запас {_fmt(safety, 0)} шт (уровень сервиса {int(sl * 100)}%" + (f", калибровка по бэктесту ×{_fmt(ss_mult, 2)}" if abs(ss_mult - 1) > 1e-9 else "") + ")")
+    if sig_active:
+        parts_txt.append(f"сигналы продаж: ожидается {_fmt(sum(x['qty'] for x in sig_active), 0)} шт, с учётом вероятности {_fmt(signal_qty, 0)} шт — " + ("добавлено в заказ" if p.include_signals else "в заказ не включено (галочка «учитывать сигналы продаж»)"))
     if wapes.get(choice) is not None:
         parts_txt.append(f"ошибка прогноза этого артикула на бэктесте {_fmt(wapes[choice], 0)}% (надёжность: {confidence_label(wapes[choice], fc_daily * 30)})")
     parts_txt.append(f"остаток {_fmt(stock, 0)}, в пути {_fmt(in_transit, 0)}")
@@ -457,6 +470,9 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         "model_backtest_wape": wapes or None,
         "forecast_wape": wapes.get(choice),
         "forecast_confidence": confidence_label(wapes.get(choice), fc_daily * 30),
+        "signal_qty": round(signal_qty, 1),
+        "signals_included": bool(p.include_signals and signal_qty > 0),
+        "signals": [{k: x.get(k) for k in ("date", "channel", "manager", "type", "qty", "expected_month", "probability", "quote")} for x in sig_all[:5]],
         "ss_multiplier": round(ss_mult, 2),
         "trend_r2": round(r2, 2),
         "plan_pct_year": round(plan_month * 1200, 1),

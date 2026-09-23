@@ -122,6 +122,11 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                                 </button>
                                 {o.article && <span className="font-mono text-zinc-400">{o.article}</span>}
                                 <span>{o.category}</span>
+                                {!!o.signal_qty && (
+                                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${o.signals_included ? "bg-brand-600 text-white" : "bg-brand-100 text-brand-900"}`} title="Сигнал продаж из чатов менеджеров, взвешенный по вероятности">
+                                    сигнал продаж +{fmt(o.signal_qty)}{o.signals_included ? " в заказе" : ""}
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">

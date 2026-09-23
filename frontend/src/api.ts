@@ -74,6 +74,8 @@ export type Order = {
   outlier_qty_excluded: number;
   justification: string;
   forecast_wape?: number | null;
+  signal_qty?: number;
+  signals_included?: boolean;
   forecast_confidence?: string;
   ss_multiplier?: number;
 };
@@ -191,6 +193,18 @@ export type CategoryTrends = {
 
 export type ChatStep = { tool: string; label?: string; summary?: string; args: string; result: string; ms?: number };
 
+export type Signal = {
+  id: string; date: string; channel: string; manager: string; client: string | null; type: string; sku: string | null; sku_name: string | null;
+  category: string | null; qty: number | null; expected_month: string | null; probability: number; weighted_qty: number | null; quote: string; summary: string; extracted_by: string;
+};
+export type SignalsResponse = { items: Signal[]; summary: { total: number; linked: number; by_type: Record<string, number>; by_channel: Record<string, number> }; types: string[] };
+export type AgentRun = { steps: ChatStep[]; extracted_by: string; total: number };
+export type NewsItem = {
+  id: string; date: string; source: string; title: string; url: string; summary: string; topic: string; categories: string[]; suppliers: string[];
+  region: string; direction: string; strength: number; horizon: string; relevance: number; action: string; extracted_by: string;
+};
+export type NewsSettings = { sources: string[]; keywords: string[]; fields: { key: string; label: string }[] };
+
 export type AuditItem = { ts: string; user: string; name: string; role: string; action: string; label: string; ok: boolean; details: Record<string, unknown> };
 export type AuditResponse = { items: AuditItem[]; summary: { total: number; by_action: Record<string, number>; by_user: Record<string, number> }; actions: Record<string, string> };
 export type IntegrationState = { enabled: boolean; status: string; checked_at: string | null; message: string; [k: string]: unknown };
@@ -236,7 +250,7 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export const api = {
   health: () => f(`${BASE}/api/health`).then((r) => j<Health>(r)),
-  run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number; growth_plan_pct_year?: number | null; ss_calibrated?: boolean }) =>
+  run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number; growth_plan_pct_year?: number | null; ss_calibrated?: boolean; include_signals?: boolean }) =>
     f(`${BASE}/api/replenish/run`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<RunResult>(r)),
   impact: () => f(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
   backtest: async (): Promise<Backtest | null> => {
@@ -283,6 +297,21 @@ export const api = {
       setToken(null);
     }
   },
+  signals: () => f(`${BASE}/api/signals`).then((r) => j<SignalsResponse>(r)),
+  importSignals: (files: File[], text: string, channel: string) => {
+    const fd = new FormData();
+    files.forEach((x) => fd.append("files", x));
+    fd.append("text", text);
+    fd.append("channel", channel);
+    return f(`${BASE}/api/signals/import`, { method: "POST", body: fd }).then((r) => j<AgentRun & { signals: Signal[] }>(r));
+  },
+  importSignalsSample: () => f(`${BASE}/api/signals/import_sample`, { method: "POST" }).then((r) => j<AgentRun & { signals: Signal[] }>(r)),
+  clearSignals: () => f(`${BASE}/api/signals`, { method: "DELETE" }).then((r) => j<{ ok: boolean }>(r)),
+  news: () => f(`${BASE}/api/news`).then((r) => j<{ items: NewsItem[]; fields: { key: string; label: string }[] }>(r)),
+  refreshNews: () => f(`${BASE}/api/news/refresh`, { method: "POST" }).then((r) => j<AgentRun & { items: NewsItem[]; errors: string[] }>(r)),
+  newsSettings: () => f(`${BASE}/api/admin/news-settings`).then((r) => j<NewsSettings>(r)),
+  saveNewsSettings: (sources: string[], keywords: string[]) =>
+    f(`${BASE}/api/admin/news-settings`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ sources, keywords }) }).then((r) => j<NewsSettings>(r)),
   adminIntegrations: () => f(`${BASE}/api/admin/integrations`).then((r) => j<AdminIntegrations>(r)),
   saveIntegration: (name: string, patch: Record<string, unknown>) =>
     f(`${BASE}/api/admin/integrations/${name}`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(patch) }).then((r) => j<Record<string, unknown>>(r)),

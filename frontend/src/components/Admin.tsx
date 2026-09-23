@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, fmt, type AdminIntegrations, type AuditResponse, type User } from "../api";
+import { api, fmt, type AdminIntegrations, type AuditResponse, type NewsSettings, type User } from "../api";
 
-type Tab = "integrations" | "audit" | "users";
+type Tab = "integrations" | "news" | "audit" | "users";
 
 export default function Admin({ user, onBack, onLogout }: { user: User; onBack: () => void; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("integrations");
@@ -15,6 +15,32 @@ export default function Admin({ user, onBack, onLogout }: { user: User; onBack: 
   const [fUser, setFUser] = useState("");
   const [fAction, setFAction] = useState("");
   const [q, setQ] = useState("");
+  const [ns, setNs] = useState<NewsSettings | null>(null);
+  const [nsSources, setNsSources] = useState("");
+  const [nsKeywords, setNsKeywords] = useState("");
+  const [nsMsg, setNsMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "news" || ns) return;
+    api
+      .newsSettings()
+      .then((r) => {
+        setNs(r);
+        setNsSources(r.sources.join("\n"));
+        setNsKeywords(r.keywords.join(", "));
+      })
+      .catch((e) => setErr((e as Error).message));
+  }, [tab, ns]);
+
+  async function saveNews() {
+    try {
+      const r = await api.saveNewsSettings(nsSources.split("\n"), nsKeywords.split(","));
+      setNs(r);
+      setNsMsg(`Сохранено: источников ${r.sources.length}, ключевых слов ${r.keywords.length}`);
+    } catch (e) {
+      setNsMsg(`Ошибка: ${(e as Error).message}`);
+    }
+  }
 
   async function load() {
     try {
@@ -111,6 +137,7 @@ export default function Admin({ user, onBack, onLogout }: { user: User; onBack: 
           {(
             [
               ["integrations", "Интеграции"],
+              ["news", "Мониторинг СМИ"],
               ["audit", "Журнал действий"],
               ["users", "Пользователи и роли"],
             ] as [Tab, string][]
@@ -164,6 +191,38 @@ export default function Admin({ user, onBack, onLogout }: { user: User; onBack: 
               </div>
             </Card>
           </div>
+        )}
+
+        {tab === "news" && ns && (
+          <section className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-4">
+              <h2 className="text-sm font-semibold text-brand-900">Источники и ключевые слова</h2>
+              <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
+                RSS-ленты, по одной в строке
+                <textarea value={nsSources} onChange={(e) => setNsSources(e.target.value)} rows={6} className="rounded-md border border-zinc-300 px-2 py-1.5 font-mono text-xs text-zinc-900" />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
+                Ключевые слова отбора (начало слова), через запятую
+                <textarea value={nsKeywords} onChange={(e) => setNsKeywords(e.target.value)} rows={5} className="rounded-md border border-zinc-300 px-2 py-1.5 text-xs text-zinc-900" />
+              </label>
+              <div className="flex items-center gap-3">
+                <button onClick={saveNews} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-900">Сохранить</button>
+                {nsMsg && <span className="text-xs text-zinc-600">{nsMsg}</span>}
+              </div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-white p-4">
+              <h2 className="text-sm font-semibold text-brand-900">Поля, которые заполняет агент</h2>
+              <p className="mt-1 text-xs text-zinc-600">Каждая новость сохраняется в журнал мониторинга с этими полями. С ключом модели поля заполняет LLM по строгой схеме, без ключа работают правила.</p>
+              <ul className="mt-2 space-y-1 text-xs">
+                {ns.fields.map((f) => (
+                  <li key={f.key} className="flex gap-2">
+                    <span className="w-24 shrink-0 font-mono text-zinc-400">{f.key}</span>
+                    <span className="text-zinc-700">{f.label}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
         )}
 
         {tab === "audit" && (

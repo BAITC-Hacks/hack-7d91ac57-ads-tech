@@ -28,6 +28,10 @@ ACTION_LABELS = {
     "email_draft": "Черновик письма поставщику",
     "integration_save": "Настройка интеграции",
     "integration_test": "Проверка интеграции",
+    "signals_import": "Импорт чатов продажников",
+    "signals_clear": "Очистка сигналов продаж",
+    "news_refresh": "Мониторинг СМИ",
+    "news_settings": "Настройка мониторинга СМИ",
 }
 
 

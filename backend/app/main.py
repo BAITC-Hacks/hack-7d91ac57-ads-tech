@@ -301,6 +301,7 @@ class RunRequest(BaseModel):
     include_zero: bool = False
     growth_plan_pct_year: float | None = None  # плановый прирост спроса, %/год, ко всем позициям
     ss_calibrated: bool = True  # калибровка страхового запаса по бэктесту
+    include_signals: bool = False  # добавить проектный спрос из сигналов продаж (взвешенный по вероятности)
 
 
 def _params(req: RunRequest) -> Params:
@@ -312,6 +313,7 @@ def _params(req: RunRequest) -> Params:
         include_zero=req.include_zero,
         growth_plan_pct_year=req.growth_plan_pct_year,
         ss_calibrated=req.ss_calibrated,
+        include_signals=req.include_signals,
     )
 
 
@@ -471,6 +473,120 @@ def order_email(order_id: str, request: Request):
     )
     audit.log(current_user(request), "email_draft", {"order_id": order_id, "to": email})
     return {"order_id": order_id, "to": email, "subject": f"Заказ {order['order_id']} от ТОО «Электрокомплект»", "body": text, "sent": False}
+
+
+# ------------------------------------------------------------------ agents: sales signals (chats) and media monitoring
+def _llm_available() -> bool:
+    return not settings.demo_mode and bool(settings.llm_api_key)
+
+
+def _apply_signals(rows: list) -> None:
+    from . import signals as sig
+
+    ds = state.get_ds()
+    ds.signals = sig.by_sku(rows)
+    state.invalidate()
+
+
+@app.post("/api/signals/import")
+async def signals_import(request: Request, files: list[UploadFile] = File(default=[]), text: str = Form(default=""), channel: str = Form(default="")):
+    """Агент сигналов продаж: выгрузки чатов Telegram (.json), WhatsApp (.txt), Bitrix24 (.csv/.json) или вставленный текст."""
+    from . import signals as sig
+
+    msgs = []
+    for f in files:
+        try:
+            msgs += sig.parse_chat(f.filename or "chat.txt", await f.read(), channel or None)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"не удалось прочитать {f.filename}: {e}") from e
+    if text.strip():
+        msgs += sig.parse_chat("paste.txt", text.encode("utf-8"), channel or "вставка")
+    if not msgs:
+        raise HTTPException(400, "нет сообщений: загрузите выгрузку чата или вставьте текст")
+    res = await sig.run_agent(msgs, state.get_ds().products, _llm_available())
+    rows = sig.merge_save(res["signals"])
+    _apply_signals(rows)
+    audit.log(current_user(request), "signals_import", {"messages": len(msgs), "signals": len(res["signals"]), "extracted_by": res["extracted_by"]})
+    return {**res, "total": len(rows)}
+
+
+@app.post("/api/signals/import_sample")
+async def signals_import_sample(request: Request):
+    """Загрузить демонстрационные выгрузки чатов (Telegram, WhatsApp, Bitrix24) из data/sample/chats."""
+    from . import signals as sig
+
+    folder = Path(__file__).resolve().parent.parent / "data" / "sample" / "chats"
+    msgs = []
+    for f in sorted(folder.glob("*")):
+        msgs += sig.parse_chat(f.name, f.read_bytes())
+    res = await sig.run_agent(msgs, state.get_ds().products, _llm_available())
+    rows = sig.merge_save(res["signals"])
+    _apply_signals(rows)
+    audit.log(current_user(request), "signals_import", {"messages": len(msgs), "signals": len(res["signals"]), "extracted_by": res["extracted_by"], "source": "демо-выгрузки"})
+    return {**res, "total": len(rows)}
+
+
+@app.get("/api/signals")
+def signals_list():
+    from . import signals as sig
+
+    rows = sig.load()
+    by_type: dict[str, int] = {}
+    by_channel: dict[str, int] = {}
+    for r in rows:
+        by_type[r["type"]] = by_type.get(r["type"], 0) + 1
+        by_channel[r["channel"]] = by_channel.get(r["channel"], 0) + 1
+    return {"items": rows, "summary": {"total": len(rows), "linked": sum(1 for r in rows if r.get("sku")), "by_type": by_type, "by_channel": by_channel}, "types": sig.TYPES}
+
+
+@app.delete("/api/signals")
+def signals_clear(request: Request):
+    from . import signals as sig
+
+    sig.clear()
+    _apply_signals([])
+    audit.log(current_user(request), "signals_clear")
+    return {"ok": True}
+
+
+@app.post("/api/news/refresh")
+async def news_refresh(request: Request):
+    """Агент мониторинга СМИ: собрать ленты, отобрать релевантное закупу, заполнить поля."""
+    from . import news
+
+    res = await news.run_agent(_llm_available())
+    audit.log(current_user(request), "news_refresh", {"new": len(res["items"]), "total": res["total"], "extracted_by": res["extracted_by"], "errors": len(res["errors"])})
+    return res
+
+
+@app.get("/api/news")
+def news_list():
+    from . import news
+
+    return {"items": news.load(), "fields": news.FIELDS}
+
+
+class NewsSettings(BaseModel):
+    sources: list[str]
+    keywords: list[str]
+
+
+@app.get("/api/admin/news-settings")
+def news_settings_get(request: Request):
+    from . import news
+
+    require_admin(request)
+    return news.settings()
+
+
+@app.put("/api/admin/news-settings")
+def news_settings_put(body: NewsSettings, request: Request):
+    from . import news
+
+    u = require_admin(request)
+    res = news.save_settings(body.sources, body.keywords)
+    audit.log(u, "news_settings", {"sources": len(res["sources"]), "keywords": len(res["keywords"])})
+    return res
 
 
 # ------------------------------------------------------------------ export

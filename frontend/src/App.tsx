@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, fmt, fmtMoney, type Backtest, type CategoryTrends, type DailyBrief, type Health, type Impact, type Order, type Overstock, type RunResult, type SkuDetail, type SupplierGroup, type Urgency, type User } from "./api";
 import Tour, { type TourStep } from "./components/Tour";
+import NewsTab from "./components/NewsTab";
+import SignalsTab from "./components/SignalsTab";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
 
-type Tab = "orders" | "accuracy" | "overstock" | "impact" | "trends";
+type Tab = "orders" | "signals" | "news" | "accuracy" | "overstock" | "impact" | "trends";
 type SortKey = "urgency" | "value" | "qty" | "cover";
 
 const SELECT = "w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-brand-500";
@@ -46,6 +48,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
   const [reviewDays, setReviewDays] = useState<number>(14);
   const [growthPlan, setGrowthPlan] = useState<string>("");
   const [ssCalibrated, setSsCalibrated] = useState(true);
+  const [includeSignals, setIncludeSignals] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
@@ -138,7 +141,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
     setRunning(true);
     setRunErr(null);
     try {
-      const r = await api.run({ warehouse: warehouse || null, category: category || null, service_level: serviceLevel ? Number(serviceLevel) : null, review_days: reviewDays, growth_plan_pct_year: growthPlan ? Number(growthPlan) : null, ss_calibrated: ssCalibrated });
+      const r = await api.run({ warehouse: warehouse || null, category: category || null, service_level: serviceLevel ? Number(serviceLevel) : null, review_days: reviewDays, growth_plan_pct_year: growthPlan ? Number(growthPlan) : null, ss_calibrated: ssCalibrated, include_signals: includeSignals });
       setResult(r);
       setQtyEdits({});
       setApproved({});
@@ -264,6 +267,8 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
 
   const tabs: [Tab, string, string | null][] = [
     ["orders", "Заказы", result ? fmt(result.summary.positions) : null],
+    ["signals", "Сигналы продаж", null],
+    ["news", "Рынок и СМИ", null],
     ["accuracy", "Точность прогноза", wapeOurs != null ? `${fmt(wapeOurs, 1)} %` : null],
     ["overstock", "Избытки", over ? fmt(over.overstock_positions + over.dead_positions) : null],
     ["impact", "Против Excel", null],
@@ -431,6 +436,10 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
                         ? "Идёт предрасчёт после запуска, можно нажимать сразу"
                         : ""}
               </span>
+              <label className="flex items-center gap-2 text-sm text-zinc-700" title="Добавить в заказ проектный спрос из чатов продажников, взвешенный по вероятности">
+                <input type="checkbox" checked={includeSignals} onChange={(e) => setIncludeSignals(e.target.checked)} className="h-4 w-4 accent-[#2c7294]" />
+                Учитывать сигналы продаж
+              </label>
               {runErr && <span className="text-sm text-red-700">Ошибка: {runErr}</span>}
               <button data-tour="run" onClick={run} disabled={running || !health} className="ml-auto rounded-md bg-accent-400 px-6 py-2 text-sm font-bold text-brand-900 shadow-sm hover:bg-accent-500 disabled:opacity-50">
                 {running ? "Считаю…" : "Рассчитать"}
@@ -527,6 +536,9 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
                   </p>
                 </>
               )}
+
+              {tab === "signals" && <SignalsTab onOpenSku={openSku} onChanged={() => result && run()} />}
+              {tab === "news" && <NewsTab />}
 
               {tab === "accuracy" &&
                 (bt ? (
