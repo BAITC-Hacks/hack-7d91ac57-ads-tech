@@ -5,8 +5,9 @@
 | Инструмент | Для чего | Примеры (коммиты/файлы) |
 |---|---|---|
 | Claude Code | план (docs/PLAN.md), движок `backend/app/replenish.py`, генератор данных, API, тесты must-have, README, контракт API | коммиты `docs:`, `feat(engine)`, `feat(api)`, `fix(engine)` |
-| OpenAI Codex | фронтенд `frontend/**` по docs/API.md | коммиты `feat(ui)`, `fix(ui)` |
 
 Модели в рантайме продукта: см. THIRD_PARTY.md.
 Весь сгенерированный код проверен и протестирован участниками команды.
-| Claude Code | фронтенд frontend/** (Codex не приступил к 14:00) | коммит feat(ui) |
+| Claude Code | фронтенд `frontend/**`: дашборд, карточка артикула, агент, стилистика ekt.kz | коммиты `feat(ui)`, `fix(ui)` |
+
+OpenAI Codex был запущен для фронтенда и стилистики, но к работе не приступил и был отключён в 15:05; кода от Codex в репозитории нет. Проверить: `git log --format='%s' | grep -i codex` возвращает только документацию.
