@@ -80,4 +80,5 @@ Base URL в dev: `/api` (Vite проксирует на `http://localhost:8000`)
 ## Изменения
 | Время | Что |
 |---|---|
+| 14:35 | Реализовано всё из v2. Уточнения: `POST /api/replenish/run` дополнительно возвращает плоский `orders` (все строки) и `elapsed_ms`; `GET /api/health` содержит `data` (сводка датасета); `POST /api/replenish/whatif` возвращает `{base, scenario, overrides, delta_qty}`, где base и scenario — полные строки заказа; строки заказа содержат также `raw_need`, `pack_size`, `review_days`, `service_level`, `avg_daily_raw_90d`, `sigma_daily`, `trend_r2`, `plan_pct_year`, `forecast_parts[]`; `GET /api/sku/{sku}` возвращает строку заказа + `monthly[]` (24 факта + 6 прогноз), `outliers[]`, `stockouts[]`, `seasonal_index{}`; `POST /api/data/reset` перечитывает образец. Срочность `none` возможна только при `include_zero=true`. |
 | 13:40 | v2: эндпоинты задачи Электрокомплект. Реализация к 14:00 (run, summary), к 15:00 (остальное). До готовности backend фронт может строить UI по примерам JSON выше. |

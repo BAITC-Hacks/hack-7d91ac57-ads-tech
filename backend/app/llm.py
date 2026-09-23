@@ -91,20 +91,23 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
     if s.demo_mode:
         # No LLM available: still exercise the tools so reviewers see a real result.
         user_text = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
-        if "search_documents" in _TOOLS and user_text:
-            out = await _call_tool("search_documents", json.dumps({"query": user_text, "k": 2}))
-            steps.append({"tool": "search_documents", "args": json.dumps({"query": user_text}), "result": out[:2000]})
-            hits = json.loads(out) if out.startswith("[") else []
-            if hits:
-                answer = "[DEMO MODE, без LLM] Наиболее релевантные фрагменты из материалов:\n\n" + "\n\n".join(
-                    f"— {h['text'][:500]}\n(источник: {h['source']})" for h in hits
-                )
-                return {"answer": answer, "steps": steps, "messages": history}
-        return {
-            "answer": "[DEMO MODE, без LLM] Материалы не загружены. Загрузите файл, и я покажу релевантные фрагменты.",
-            "steps": steps,
-            "messages": history,
-        }
+        import re
+
+        m = re.search(r"[A-Za-z]{3}-\d{3}", user_text)
+        if m and "explain_sku" in _TOOLS:
+            out = await _call_tool("explain_sku", json.dumps({"sku": m.group(0).upper()}))
+            steps.append({"tool": "explain_sku", "args": json.dumps({"sku": m.group(0).upper()}), "result": out[:2000]})
+            d = json.loads(out)
+            answer = "[DEMO MODE, без LLM] " + (d.get("justification") or d.get("error", ""))
+            return {"answer": answer, "steps": steps, "messages": history}
+        if "list_orders" in _TOOLS:
+            out = await _call_tool("list_orders", json.dumps({"urgency": "critical", "limit": 5}))
+            steps.append({"tool": "list_orders", "args": json.dumps({"urgency": "critical"}), "result": out[:2000]})
+            d = json.loads(out)
+            rows = d.get("orders", [])
+            answer = "[DEMO MODE, без LLM] Критичные позиции: " + "; ".join(f"{r['sku']} {r['name']} — {r['recommended_qty']} шт ({r['supplier']})" for r in rows) if rows else "[DEMO MODE] Критичных позиций нет."
+            return {"answer": answer, "steps": steps, "messages": history}
+        return {"answer": "[DEMO MODE, без LLM] Укажите артикул (например, LMP-001) или спросите про критичные позиции.", "steps": steps, "messages": history}
 
     client = _client()
     specs = tool_specs()

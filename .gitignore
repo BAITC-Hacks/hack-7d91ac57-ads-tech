@@ -4,7 +4,9 @@ __pycache__/
 *.pyc
 node_modules/
 dist/
-backend/data/
+backend/data/*
+!backend/data/sample/
+!backend/data/.gitkeep
 .DS_Store
 *.log
 .omc/

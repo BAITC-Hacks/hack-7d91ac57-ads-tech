@@ -1,0 +1,7 @@
+supplier_id,supplier,lead_time_days,moq,email
+S1,ТОО Кабельный дом,14,100,orders@kabeldom.kz
+S2,IEK Central Asia,21,50,kz@iek.example
+S3,Schneider Electric KZ,30,20,orders@se.example
+S4,Legrand Дистрибуция,28,24,dist@legrand.example
+S5,ЭлектроСклад Алматы,7,10,sales@elsklad.kz
+S6,Guangzhou Lighting Co.,45,200,export@gzlight.example
