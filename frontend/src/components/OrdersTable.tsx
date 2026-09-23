@@ -99,9 +99,9 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                   <thead className="text-left text-[11px] font-medium uppercase tracking-wide text-zinc-500">
                     <tr className="border-b border-zinc-200">
                       <th className="px-4 py-2">Товар</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-right">Остаток / в пути</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-right">Прогноз в день</th>
-                      <th className="whitespace-nowrap px-2 py-2 text-right">Покрытие</th>
+                      <th className="px-2 py-2 text-right leading-tight">Остаток / в пути</th>
+                      <th className="px-2 py-2 text-right leading-tight">Прогноз в день</th>
+                      <th className="px-2 py-2 text-right">Покрытие</th>
                       <th className="px-2 py-2 text-right">Заказать</th>
                       <th className="px-2 py-2">Срочность</th>
                       <th className="px-2 py-2" aria-label="Обоснование"></th>
@@ -114,7 +114,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                       return (
                         <Fragment key={o.sku}>
                           <tr className={`border-b border-zinc-100 align-top hover:bg-zinc-50 ${exp ? "bg-brand-50" : ""}`}>
-                            <td className="min-w-[220px] max-w-[420px] px-4 py-2">
+                            <td className="min-w-[190px] max-w-[420px] px-4 py-2">
                               <div className="truncate font-medium text-zinc-900" title={o.name}>{o.name}</div>
                               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
                                 <button className="font-mono text-brand-600 hover:underline" onClick={() => onOpenSku(o.sku)} title="Открыть график, обоснование и what-if">
@@ -145,7 +145,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                                 value={qtyEdits[o.sku] ?? o.recommended_qty}
                                 onChange={(e) => onEditQty(o.sku, Math.max(0, Number(e.target.value)))}
                                 aria-label={`Количество к заказу ${o.sku}`}
-                                className={`w-24 rounded-md border px-2 py-1 text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500 ${edited ? "border-amber-400 bg-amber-50" : "border-zinc-300"}`}
+                                className={`w-20 rounded-md border px-2 py-1 text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500 ${edited ? "border-amber-400 bg-amber-50" : "border-zinc-300"}`}
                               />
                               {edited && <div className="mt-0.5 text-[10px] text-amber-700">рекомендовано {fmt(o.recommended_qty)}</div>}
                             </td>
@@ -153,7 +153,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                               <UrgencyBadge u={o.urgency} />
                             </td>
                             <td className="px-2 py-2 text-right">
-                              <button onClick={() => setExpanded(exp ? null : o.sku)} className="whitespace-nowrap rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100" aria-expanded={exp}>
+                              <button onClick={() => setExpanded(exp ? null : o.sku)} className="whitespace-nowrap rounded-md border border-zinc-300 px-1.5 py-1 text-xs text-zinc-700 hover:bg-zinc-100" aria-expanded={exp}>
                                 {exp ? "Скрыть" : "Почему?"}
                               </button>
                             </td>

@@ -618,6 +618,27 @@ def naive_need(ds: Dataset, sku: str, warehouse: str, horizon: int, window_days:
     return mean_daily * horizon - stock - in_transit
 
 
+def _impact_reason(r: dict[str, Any], diff: float) -> str:
+    """Why the service differs from the naive 90-day average for this SKU (diff > 0: Excel would order more)."""
+    parts: list[str] = []
+    if diff > 0:
+        if r.get("outliers_excluded"):
+            parts.append("Excel учёл разовые продажи")
+        if r.get("seasonal_factor", 1) < 0.95:
+            parts.append("сезонный спад")
+        if r.get("trend_used") and r.get("trend_pct_month", 0) < 0:
+            parts.append("спрос снижается")
+        return ", ".join(parts) or "остаток и товар в пути покрывают спрос"
+    if r.get("lost_demand_qty"):
+        parts.append("восстановлен спрос в дефиците")
+    if r.get("seasonal_factor", 1) > 1.05:
+        parts.append("сезонный рост")
+    if r.get("trend_used") and r.get("trend_pct_month", 0) > 0:
+        parts.append("устойчивый рост")
+    parts.append("страховой запас" + (" с калибровкой" if r.get("ss_multiplier", 1) > 1 else ""))
+    return ", ".join(parts)
+
+
 def impact(ds: Dataset, result: dict[str, Any], full: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compare engine recommendations with the naive baseline, in units and money, over ALL positions of the
     warehouse (including those where the engine recommends nothing but the naive method would order).
@@ -640,7 +661,7 @@ def impact(ds: Dataset, result: dict[str, Any], full: dict[str, Any] | None = No
         else:
             deficit_qty += -diff
             deficit_money += -diff * price
-        rows.append({"sku": r["sku"], "name": r["name"], "supplier": r["supplier"], "naive_qty": int(round(nv)), "recommended_qty": int(ours), "diff_qty": int(round(diff)), "diff_money": round(diff * price), "reason": "выброс" if r["outliers_excluded"] else "дефицит" if r["lost_demand_qty"] else "сезон/тренд/страховой"})
+        rows.append({"sku": r["sku"], "name": r["name"], "supplier": r["supplier"], "naive_qty": int(round(nv)), "recommended_qty": int(ours), "diff_qty": int(round(diff)), "diff_money": round(diff * price), "reason": _impact_reason(r, diff)})
     rows.sort(key=lambda x: -abs(x["diff_money"]))
     return {
         "positions": len(full["orders"]),
