@@ -93,7 +93,7 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
         user_text = next((m.get("content") or "" for m in reversed(messages) if m.get("role") == "user"), "")
         import re
 
-        m = re.search(r"[A-Za-z]{3}-\d{3}", user_text)
+        m = re.search(r"[A-Za-z]{3}-\d{3}|\d{9}_?", user_text)
         if m and "explain_sku" in _TOOLS:
             out = await _call_tool("explain_sku", json.dumps({"sku": m.group(0).upper()}))
             steps.append({"tool": "explain_sku", "args": json.dumps({"sku": m.group(0).upper()}), "result": out[:2000]})

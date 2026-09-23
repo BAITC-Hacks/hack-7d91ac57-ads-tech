@@ -35,6 +35,7 @@ SYSTEM_PROMPT = (
 async def lifespan(_: FastAPI):
     Path("data").mkdir(exist_ok=True)
     state.get_ds()
+    state.precompute_in_background()
     yield
 
 
@@ -69,6 +70,7 @@ def health():
         "demo_mode": settings.demo_mode,
         "tools": [t["function"]["name"] for t in tool_specs()],
         "data": state.get_ds().summary(),
+        "calculation_ready": state.last_result() is not None,
     }
 
 
@@ -128,7 +130,7 @@ def data_reset():
 
 # ------------------------------------------------------------------ replenishment
 class RunRequest(BaseModel):
-    warehouse: str | None = "Главный"
+    warehouse: str | None = None  # None → склад по умолчанию из данных
     category: str | None = None
     service_level: float | None = None
     review_days: int = 14
@@ -137,7 +139,7 @@ class RunRequest(BaseModel):
 
 def _params(req: RunRequest) -> Params:
     return Params(
-        warehouse=req.warehouse or None,
+        warehouse=req.warehouse or state.get_ds().default_warehouse(),
         category=req.category or None,
         service_level=req.service_level,
         review_days=req.review_days,
@@ -175,8 +177,9 @@ def replenish_impact():
 
 
 @app.get("/api/sku/{sku}")
-def sku_get(sku: str, warehouse: str = "Главный"):
+def sku_get(sku: str, warehouse: str | None = None):
     ds = state.get_ds()
+    warehouse = warehouse or ds.default_warehouse()
     if sku not in set(ds.products["sku"]):
         raise HTTPException(404, f"unknown sku {sku}")
     return sku_detail(ds, sku, warehouse, Params(warehouse=warehouse))
@@ -184,7 +187,7 @@ def sku_get(sku: str, warehouse: str = "Главный"):
 
 class WhatIfRequest(BaseModel):
     sku: str
-    warehouse: str = "Главный"
+    warehouse: str | None = None
     in_transit: float | None = None
     stock: float | None = None
     service_level: float | None = None
@@ -197,11 +200,12 @@ def whatif(req: WhatIfRequest):
     ds = state.get_ds()
     if req.sku not in set(ds.products["sku"]):
         raise HTTPException(404, f"unknown sku {req.sku}")
-    p = Params(warehouse=req.warehouse)
-    base = compute_sku(ds, req.sku, req.warehouse, p)
+    wh = req.warehouse or ds.default_warehouse()
+    p = Params(warehouse=wh)
+    base = compute_sku(ds, req.sku, wh, p)
     base.pop("_series", None)
     ov = {k: v for k, v in req.model_dump().items() if k not in ("sku", "warehouse") and v is not None}
-    new = compute_sku(ds, req.sku, req.warehouse, p, overrides=ov)
+    new = compute_sku(ds, req.sku, wh, p, overrides=ov)
     new.pop("_series", None)
     return {"base": base, "scenario": new, "overrides": ov, "delta_qty": new["recommended_qty"] - base["recommended_qty"]}
 

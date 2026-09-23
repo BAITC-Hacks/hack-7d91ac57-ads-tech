@@ -11,3 +11,5 @@ backend/data/*
 *.log
 .omc/
 *.tsbuildinfo
+backend/data/partner/
+backend/data/partner_raw/

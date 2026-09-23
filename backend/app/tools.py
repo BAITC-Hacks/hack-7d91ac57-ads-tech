@@ -17,8 +17,8 @@ def _strip(r: dict) -> dict:
     "Запустить расчёт рекомендованных заказов поставщикам. Возвращает сводку и позиции по поставщикам.",
     {"type": "object", "properties": {"warehouse": {"type": "string", "description": "склад, по умолчанию Главный"}, "category": {"type": "string"}}, "required": []},
 )
-def run_replenishment(warehouse: str = "Главный", category: str | None = None) -> dict:
-    res = state.ensure_result(Params(warehouse=warehouse or "Главный", category=category or None))
+def run_replenishment(warehouse: str | None = None, category: str | None = None) -> dict:
+    res = state.ensure_result(Params(warehouse=warehouse or state.get_ds().default_warehouse(), category=category or None))
     return {"summary": res["summary"], "suppliers": [{"supplier": s["supplier"], "supplier_id": s["supplier_id"], "positions": s["positions"], "total_qty": s["total_qty"], "critical": s["critical"]} for s in res["suppliers"]]}
 
 
@@ -26,15 +26,18 @@ def run_replenishment(warehouse: str = "Главный", category: str | None = 
     "Объяснить расчёт по артикулу: прогноз, сезонность, тренд, исключённые выбросы, упущенный спрос, страховой запас, остаток, в пути, итоговое количество.",
     {"type": "object", "properties": {"sku": {"type": "string"}, "warehouse": {"type": "string"}}, "required": ["sku"]},
 )
-def explain_sku(sku: str, warehouse: str = "Главный") -> dict:
+def explain_sku(sku: str, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
-    sku = sku.strip().upper()
+    warehouse = warehouse or ds.default_warehouse()
+    sku = sku.strip()
+    if sku not in set(ds.products["sku"]):
+        sku = sku.upper()
     if sku not in set(ds.products["sku"]):
         match = ds.products[ds.products["name"].str.contains(sku, case=False, na=False)]
         if match.empty:
             return {"error": f"артикул {sku} не найден"}
         sku = str(match["sku"].iloc[0])
-    r = compute_sku(ds, sku, warehouse or "Главный", Params(warehouse=warehouse))
+    r = compute_sku(ds, sku, warehouse, Params(warehouse=warehouse))
     s = r.pop("_series")
     out = _strip(r)
     out["outliers"] = s["outliers"][:5]
@@ -62,9 +65,12 @@ def list_orders(supplier: str | None = None, urgency: str | None = None, warehou
     "Пересчитать позицию при изменении входных данных: товар в пути, остаток, срок поставки, уровень сервиса.",
     {"type": "object", "properties": {"sku": {"type": "string"}, "in_transit": {"type": "number"}, "stock": {"type": "number"}, "lead_time_days": {"type": "integer"}, "service_level": {"type": "number"}, "warehouse": {"type": "string"}}, "required": ["sku"]},
 )
-def what_if(sku: str, in_transit: float | None = None, stock: float | None = None, lead_time_days: int | None = None, service_level: float | None = None, warehouse: str = "Главный") -> dict:
+def what_if(sku: str, in_transit: float | None = None, stock: float | None = None, lead_time_days: int | None = None, service_level: float | None = None, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
-    sku = sku.strip().upper()
+    warehouse = warehouse or ds.default_warehouse()
+    sku = sku.strip()
+    if sku not in set(ds.products["sku"]):
+        sku = sku.upper()
     if sku not in set(ds.products["sku"]):
         return {"error": f"артикул {sku} не найден"}
     p = Params(warehouse=warehouse)

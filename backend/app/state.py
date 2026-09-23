@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,15 @@ ORDERS_FILE = Path("data/approved_orders.json")
 _ds: Dataset | None = None
 _last: dict[str, Any] | None = None
 _last_params: Params | None = None
+_cache: dict[tuple, dict[str, Any]] = {}
+_lock = threading.Lock()
+
+
+def _today_override():
+    from datetime import date
+
+    v = os.environ.get("TODAY")
+    return date.fromisoformat(v) if v else None
 
 
 def get_ds() -> Dataset:
@@ -24,7 +34,7 @@ def get_ds() -> Dataset:
             from .synth import generate
 
             generate(DATA_DIR)
-        _ds = Dataset.load(DATA_DIR)
+        _ds = Dataset.load(DATA_DIR, today=_today_override())
     return _ds
 
 
@@ -36,12 +46,14 @@ def reset_ds(regenerate: bool = False) -> Dataset:
         generate(DATA_DIR)
     _ds = None
     _last = None
+    _cache.clear()
     return get_ds()
 
 
 def invalidate() -> None:
     global _last
     _last = None
+    _cache.clear()
 
 
 def ensure_result(params: Params | None = None) -> dict[str, Any]:
@@ -49,10 +61,28 @@ def ensure_result(params: Params | None = None) -> dict[str, Any]:
     if params is None:
         if _last is not None:
             return _last
-        params = _last_params or Params(warehouse="Главный")
-    _last = run(get_ds(), params)
-    _last_params = params
+        params = _last_params or Params(warehouse=get_ds().default_warehouse())
+    key = (params.warehouse, params.category, params.service_level, params.review_days, params.include_zero)
+    with _lock:
+        if key not in _cache:
+            _cache[key] = run(get_ds(), params)
+        _last = _cache[key]
+        _last_params = params
     return _last
+
+
+def precompute_in_background() -> None:
+    """Warm the default calculation at startup so the first UI request is instant (partner data: ~40 s)."""
+
+    def _job():
+        try:
+            ensure_result(Params(warehouse=get_ds().default_warehouse()))
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("state").exception("precompute failed")
+
+    threading.Thread(target=_job, daemon=True).start()
 
 
 def last_result() -> dict[str, Any] | None:

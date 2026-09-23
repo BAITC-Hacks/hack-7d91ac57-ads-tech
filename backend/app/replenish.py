@@ -51,7 +51,7 @@ class Dataset:
     @classmethod
     def load(cls, folder: Path, today: date | None = None) -> "Dataset":
         f = Path(folder)
-        sales = pd.read_csv(f / "sales.csv", parse_dates=["date"])
+        sales = pd.read_csv(f / "sales.csv", parse_dates=["date"], low_memory=False)
         stockouts = pd.read_csv(f / "stockouts.csv", parse_dates=["date_from", "date_to"]) if (f / "stockouts.csv").exists() else pd.DataFrame(columns=["sku", "warehouse", "date_from", "date_to"])
         in_transit = pd.read_csv(f / "in_transit.csv", parse_dates=["eta"]) if (f / "in_transit.csv").exists() else pd.DataFrame(columns=["sku", "warehouse", "qty", "eta"])
         ds = cls(
@@ -69,6 +69,20 @@ class Dataset:
 
     def replace(self, kind: str, df: pd.DataFrame) -> None:
         setattr(self, kind, df)
+        self._groups = None
+
+    _groups: dict | None = None
+
+    def tx(self, sku: str, warehouse: str) -> pd.DataFrame:
+        """Transactions for one SKU/warehouse, from a cached groupby (2 700 SKUs × 250 k rows otherwise)."""
+        if self._groups is None:
+            self._groups = {k: g for k, g in self.sales.groupby(["sku", "warehouse"], sort=False)}
+        g = self._groups.get((sku, warehouse))
+        return g if g is not None else self.sales.iloc[0:0]
+
+    def default_warehouse(self) -> str:
+        whs = sorted(self.stock["warehouse"].unique().tolist()) or sorted(self.sales["warehouse"].unique().tolist())
+        return "Главный" if "Главный" in whs else (whs[0] if whs else "Главный")
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -82,6 +96,7 @@ class Dataset:
             "stockout_periods": int(len(self.stockouts)),
             "in_transit_lines": int(len(self.in_transit)),
             "today": str(self.today),
+            "default_warehouse": self.default_warehouse(),
         }
 
 
@@ -109,9 +124,11 @@ def detect_outliers(tx: pd.DataFrame, z_thr: float, client_share_thr: float) -> 
     med = float(daily.median())
     mad = float((daily - med).abs().median()) or max(med * 0.25, 1.0)
     typical = max(med, 1.0)
-    # rule A: transaction far beyond typical daily demand
+    # rule A: a transaction far beyond typical daily demand AND in the top 1 % of this SKU's transaction sizes
+    # (the percentile cap keeps heavy-tailed but regular demand, e.g. cable by the drum, from being "one-off")
     z = 0.6745 * (tx["qty"] - med) / mad
-    rule_a = (z > z_thr) & (tx["qty"] > 3 * typical)
+    p99 = float(tx["qty"].quantile(0.99)) if len(tx) >= 20 else float("inf")
+    rule_a = (z > z_thr) & (tx["qty"] > 8 * typical) & (tx["qty"] >= p99)
     tx.loc[rule_a, "is_outlier"] = True
     tx.loc[rule_a, "reason"] = "робастный z=" + z[rule_a].round(1).astype(str)
     # rule B: one client dominates a month with an unusually large month
@@ -121,7 +138,7 @@ def detect_outliers(tx: pd.DataFrame, z_thr: float, client_share_thr: float) -> 
     by_client = tx.groupby(["month", "client_id"])["qty"].sum()
     for (mth, client), q in by_client.items():
         tot = monthly[mth]
-        if tot > 0 and q / tot >= client_share_thr and tot > 2 * med_month and q > 3 * typical:
+        if tot > 0 and q / tot >= client_share_thr and tot > 2 * med_month and q > 8 * typical:
             mask = (tx["month"] == mth) & (tx["client_id"] == client) & (tx["qty"] > typical)
             tx.loc[mask & ~tx["is_outlier"], "reason"] = f"{q / tot:.0%} спроса месяца одним клиентом"
             tx.loc[mask, "is_outlier"] = True
@@ -166,9 +183,9 @@ def impute_stockouts(daily: pd.Series, periods: pd.DataFrame, window: int = 28) 
 def seasonal_and_trend(monthly: pd.Series) -> tuple[dict[int, float], float, float, float]:
     """Returns (seasonal index by month 1..12, level at last month (deseasonalized), growth per month, r2)."""
     n = len(monthly)
-    if n == 0:
+    if n == 0 or float(np.nansum(monthly.values)) <= 0:
         return {m: 1.0 for m in range(1, 13)}, 0.0, 0.0, 0.0
-    y = monthly.values.astype(float)
+    y = np.nan_to_num(monthly.values.astype(float))
     x = np.arange(n, dtype=float)
     idx = {m: 1.0 for m in range(1, 13)}
     months = np.array([p.month for p in monthly.index])
@@ -186,8 +203,9 @@ def seasonal_and_trend(monthly: pd.Series) -> tuple[dict[int, float], float, flo
             raw = {m: float(np.mean(ratio[months == m])) if (months == m).any() else 1.0 for m in range(1, 13)}
             k = min(n / 24.0, 1.0)  # shrink toward 1 when history is short
             raw = {m: 1 + (v - 1) * k for m, v in raw.items()}
-            mean = np.mean(list(raw.values()))
-            idx = {m: float(v / mean) for m, v in raw.items()}
+            mean = float(np.mean(list(raw.values())))
+            idx = {m: float(v / mean) if mean > 0 and np.isfinite(v) else 1.0 for m, v in raw.items()}
+            idx = {m: (v if np.isfinite(v) and v > 0 else 1.0) for m, v in idx.items()}
         else:
             idx = {m: 1.0 for m in range(1, 13)}
     s = np.array([idx[m] for m in months])
@@ -242,7 +260,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     sl = p.service_level or CATEGORY_SERVICE_LEVEL.get(prod["category"], 0.95)
     sl = float(overrides.get("service_level") or sl)
 
-    tx = ds.sales[(ds.sales["sku"] == sku) & (ds.sales["warehouse"] == warehouse)]
+    tx = ds.tx(sku, warehouse)
     start = ds.sales["date"].min().date()
     end = ds.today - timedelta(days=1)
     tx, outliers = detect_outliers(tx, p.outlier_z, p.outlier_client_share)
@@ -276,7 +294,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     # seasonal drift, keeps genuine randomness), scaled to the horizon
     weekly = clean_daily[-182:].resample("W").sum() if len(clean_daily) >= 14 else clean_daily.resample("W").sum()
     weekly = weekly / np.array([idx[ts.month] for ts in weekly.index])
-    sigma_week = float(weekly.std()) if len(weekly) > 2 else 0.0
+    sigma_week = float(np.nan_to_num(weekly.std())) if len(weekly) > 2 else 0.0
     sigma = sigma_week / math.sqrt(7)
     safety = z_for(sl) * sigma_week * math.sqrt(horizon / 7)
 
@@ -289,9 +307,11 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         eta_limit = pd.Timestamp(ds.today + timedelta(days=horizon))
         in_transit = float(it.loc[it["eta"] <= eta_limit, "qty"].sum()) if len(it) else 0.0
 
+    fc_total = float(np.nan_to_num(fc_total))
+    safety = float(np.nan_to_num(safety))
     raw_need = fc_total + safety - stock - in_transit
     pack = int(prod.get("pack_size", 1) or 1)
-    moq = int(sup.get("moq", 0) or 0)
+    moq = int(prod.get("moq") or 0) if "moq" in prod.index and pd.notna(prod.get("moq")) else int(sup.get("moq", 0) or 0)
     if raw_need <= 0:
         rec = 0
     else:
@@ -387,7 +407,7 @@ def run(ds: Dataset, p: Params) -> dict[str, Any]:
     prods = ds.products
     if p.category:
         prods = prods[prods["category"] == p.category]
-    warehouses = [p.warehouse] if p.warehouse else sorted(ds.stock["warehouse"].unique().tolist())
+    warehouses = [p.warehouse] if p.warehouse else [ds.default_warehouse()]
     rows = []
     for wh in warehouses:
         skus_here = set(ds.stock.loc[ds.stock["warehouse"] == wh, "sku"]) | set(ds.sales.loc[ds.sales["warehouse"] == wh, "sku"])
@@ -468,7 +488,7 @@ def export_rows(result: dict[str, Any], supplier_id: str | None = None) -> pd.Da
 def naive_need(ds: Dataset, sku: str, warehouse: str, horizon: int, window_days: int = 90) -> float:
     """Excel-style baseline as purchasing managers usually do it: mean raw daily sales over the last 90 days ×
     horizon − stock − in transit. No outlier handling, no stockout compensation, no seasonality, no safety stock."""
-    tx = ds.sales[(ds.sales["sku"] == sku) & (ds.sales["warehouse"] == warehouse)]
+    tx = ds.tx(sku, warehouse)
     since = pd.Timestamp(ds.today - timedelta(days=window_days))
     mean_daily = float(tx.loc[tx["date"] >= since, "qty"].sum()) / window_days
     stock_row = ds.stock[(ds.stock["sku"] == sku) & (ds.stock["warehouse"] == warehouse)]
