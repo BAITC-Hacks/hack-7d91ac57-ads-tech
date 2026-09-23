@@ -210,7 +210,7 @@ export default function App() {
               </>
             )}
           </div>
-          <div className="ml-auto flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs sm:ml-auto">
             <button onClick={loadBrief} disabled={briefBusy || !health} className="rounded-lg bg-brand-600 px-2.5 py-1.5 font-medium text-white hover:bg-brand-900 disabled:opacity-50">
               {briefBusy ? "агент работает…" : "Утренняя сводка агента"}
             </button>
