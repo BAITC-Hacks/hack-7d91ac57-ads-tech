@@ -462,15 +462,6 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
 
           {result && (
             <>
-              <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3">
-                <div className="min-w-0 text-sm text-zinc-700">
-                  <b className="text-brand-900">Отчёт готов.</b> {fmt(result.summary.positions)} позиций, {fmt(result.summary.critical)} критичных: посмотрите всё сразу на графиках.
-                </div>
-                <button data-tour="viz" onClick={() => setShowViz(true)} className="ai-btn flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold text-white">
-                  <Sparkle className="h-4 w-4" />
-                  Показать всё на графиках
-                </button>
-              </section>
               <section data-tour="stats" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label="Позиций к заказу" value={fmt(result.summary.positions)} sub={`у ${result.summary.suppliers} поставщиков · ${fmt(result.summary.total_qty)} шт`} />
                 <Stat label="Критичных" value={fmt(result.summary.critical)} tone="red" sub="запаса меньше, чем срок поставки" />
@@ -728,7 +719,7 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
         </div>
       </main>
 
-      <footer className="mx-auto max-w-[1500px] px-4 pb-8 text-xs text-zinc-500 sm:px-6">
+      <footer className="mx-auto max-w-[1500px] px-4 pb-28 text-xs text-zinc-500 sm:px-6">
         {health?.data.source ? `${health.data.source} · ` : ""}
         {result ? `расчёт на ${result.today} · ` : ""}
         {bt ? `бэктест: обучение до ${bt.test.cutoff}, проверка ${bt.test.months[0]}…${bt.test.months[bt.test.months.length - 1]} · ` : ""}
@@ -886,6 +877,23 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+      {result && !running && !showViz && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-20 flex justify-center px-4 lg:pr-[380px]">
+          <div key={result.generated_at} className="ai-dock pointer-events-auto relative rounded-full">
+            <button data-tour="viz" onClick={() => setShowViz(true)} className="ai-btn flex items-center gap-3 rounded-full py-2 pl-2 pr-6 text-left text-white">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/20 ring-1 ring-white/40 backdrop-blur">
+                <Sparkle className="h-5 w-5" />
+              </span>
+              <span className="leading-tight">
+                <span className="block text-sm font-bold">Показать всё на графиках</span>
+                <span className="block text-[11px] font-medium text-white/80">
+                  отчёт готов · {fmt(result.summary.positions)} позиций · {fmt(result.summary.critical)} критичных
+                </span>
+              </span>
+            </button>
           </div>
         </div>
       )}
