@@ -58,8 +58,8 @@ export default function SkuChart({ d }: { d: SkuDetail }) {
             <rect key={`b${i}`} x={x(i) + xw * 0.15} y={y(r.raw)} width={xw * 0.7} height={Math.max(0, y(0) - y(r.raw))} fill="#d4d4d8" rx={1} />
           )
         )}
-        {cleanedPath && <path d={cleanedPath} fill="none" stroke="#4f46e5" strokeWidth={2} />}
-        {fcPath && <path d={fcPath} fill="none" stroke="#059669" strokeWidth={2} strokeDasharray="5 4" />}
+        {cleanedPath && <path d={cleanedPath} fill="none" stroke="#0b4366" strokeWidth={2} />}
+        {fcPath && <path d={fcPath} fill="none" stroke="#f4b301" strokeWidth={2} strokeDasharray="5 4" />}
         {outlierPts.map(({ i, o }, k) => (
           <g key={`o${k}`}>
             <circle cx={x(i) + xw / 2} cy={y(rows[i].raw ?? 0)} r={5} fill="#ef4444" stroke="white" strokeWidth={1.5}>
@@ -78,8 +78,8 @@ export default function SkuChart({ d }: { d: SkuDetail }) {
       </svg>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-600">
         <span><i className="inline-block h-2.5 w-2.5 rounded-sm bg-zinc-300 align-middle" /> сырые продажи</span>
-        <span><i className="inline-block h-0.5 w-4 bg-indigo-600 align-middle" /> очищенный спрос</span>
-        <span><i className="inline-block h-0.5 w-4 border-t-2 border-dashed border-emerald-600 align-middle" /> прогноз</span>
+        <span><i className="inline-block h-0.5 w-4 bg-brand-900 align-middle" /> очищенный спрос</span>
+        <span><i className="inline-block h-0.5 w-4 border-t-2 border-dashed border-accent-400 align-middle" /> прогноз</span>
         <span><i className="inline-block h-2.5 w-2.5 rounded-full bg-red-500 align-middle" /> разовая продажа</span>
         <span><i className="inline-block h-2.5 w-2.5 bg-red-100 align-middle" /> дефицит</span>
       </div>

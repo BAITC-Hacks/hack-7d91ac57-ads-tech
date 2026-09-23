@@ -68,7 +68,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                     <button onClick={() => showEmail(approved[g.supplier_id])} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100">Письмо поставщику</button>
                   </>
                 ) : (
-                  <button onClick={() => setConfirm(g)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">
+                  <button onClick={() => setConfirm(g)} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-900">
                     Утвердить заказ
                   </button>
                 )}
@@ -102,9 +102,9 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                       const isOpen = expanded === o.sku;
                       return (
                         <Fragment key={o.sku}>
-                          <tr className={`border-b border-zinc-100 hover:bg-zinc-50 ${isOpen ? "bg-indigo-50/40" : ""}`}>
+                          <tr className={`border-b border-zinc-100 hover:bg-zinc-50 ${isOpen ? "bg-brand-50" : ""}`}>
                             <td className="px-4 py-2 font-mono text-xs">
-                              <button className="text-indigo-700 hover:underline" onClick={() => onOpenSku(o.sku)} title="Открыть график и детали">
+                              <button className="text-brand-600 hover:underline" onClick={() => onOpenSku(o.sku)} title="Открыть график и детали">
                                 {o.sku}
                               </button>
                               {o.article && <div className="text-[10px] text-zinc-400">{o.article}</div>}
@@ -141,7 +141,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                             </td>
                           </tr>
                           {isOpen && (
-                            <tr className="border-b border-zinc-200 bg-indigo-50/40">
+                            <tr className="border-b border-zinc-200 bg-brand-50">
                               <td colSpan={10} className="px-4 py-3">
                                 <p className="text-sm leading-relaxed text-zinc-800">{o.justification}</p>
                                 <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-zinc-600 sm:grid-cols-4 lg:grid-cols-6">
@@ -156,7 +156,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
                                   <Kv k="Ожидаемый дефицит" v={o.stockout_date ?? "нет"} />
                                   <Kv k="Сумма заказа" v={o.order_value ? `≈ ${fmt(o.order_value)} ₸` : "себестоимость неизвестна"} />
                                 </div>
-                                <button onClick={() => onOpenSku(o.sku)} className="mt-2 text-xs text-indigo-700 hover:underline">
+                                <button onClick={() => onOpenSku(o.sku)} className="mt-2 text-xs text-brand-600 hover:underline">
                                   Открыть график и what-if →
                                 </button>
                               </td>
@@ -182,7 +182,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
             <p className="mt-2 text-xs text-amber-800">Письмо не отправляется из сервиса: скопируйте в почту после проверки.</p>
             <div className="mt-3 flex justify-end gap-2">
               <button onClick={() => navigator.clipboard?.writeText(email.body)} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm">Скопировать</button>
-              <button onClick={() => setEmail(null)} className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-white">Закрыть</button>
+              <button onClick={() => setEmail(null)} className="rounded-lg bg-brand-900 px-3 py-2 text-sm text-white">Закрыть</button>
             </div>
           </div>
         </div>
@@ -208,7 +208,7 @@ export default function OrdersTable({ groups, qtyEdits, onEditQty, onOpenSku, on
             {err && <p className="mt-2 text-sm text-red-700">Ошибка: {err}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setConfirm(null)} disabled={busy} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm">Отмена</button>
-              <button onClick={() => doApprove(confirm)} disabled={busy} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              <button onClick={() => doApprove(confirm)} disabled={busy} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
                 {busy ? "Сохраняю…" : "Подтверждаю"}
               </button>
             </div>

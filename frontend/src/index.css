@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/* Стилистика ГК «Электрокомплект» (ekt.kz): цвета логотипа и сайта, шрифт Montserrat, небольшие скругления */
+@theme {
+  --font-sans: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-brand-50: #eef5f9;
+  --color-brand-100: #d6e8f1;
+  --color-brand-200: #a9cfe2;
+  --color-brand-500: #0b98d0;
+  --color-brand-600: #2c7294;
+  --color-brand-700: #1d5a7a;
+  --color-brand-900: #0b4366;
+  --color-accent-300: #ffd35a;
+  --color-accent-400: #f4b301;
+  --color-accent-500: #dca100;
+  --color-page: #f3f5f6;
+  --radius-md: 5px;
+  --radius-lg: 5px;
+  --radius-xl: 6px;
+}
+
+body {
+  background: var(--color-page);
+}

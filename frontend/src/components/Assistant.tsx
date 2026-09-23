@@ -46,7 +46,7 @@ export default function Assistant({ focusSku, demoMode }: { focusSku?: string; d
       <div className="flex min-h-[260px] flex-1 flex-col gap-2 overflow-y-auto px-4 py-3">
         {msgs.length === 0 && <p className="text-sm text-zinc-400">Спросите, почему рекомендовано именно такое количество, или что изменится при новых поставках.</p>}
         {msgs.map((m, i) => (
-          <div key={i} className={`max-w-[92%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "self-end bg-indigo-600 text-white" : "self-start bg-zinc-100 text-zinc-800"}`}>
+          <div key={i} className={`max-w-[92%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "self-end bg-brand-600 text-white" : "self-start bg-zinc-100 text-zinc-800"}`}>
             {m.content}
           </div>
         ))}
@@ -58,7 +58,7 @@ export default function Assistant({ focusSku, demoMode }: { focusSku?: string; d
           <ul className="space-y-1">
             {steps.map((s, i) => (
               <li key={i} className="rounded border border-zinc-200 bg-zinc-50 p-2">
-                <div className="font-mono text-xs text-indigo-700">{s.tool}<span className="text-zinc-400"> {s.args}</span></div>
+                <div className="font-mono text-xs text-brand-600">{s.tool}<span className="text-zinc-400"> {s.args}</span></div>
                 <div className="line-clamp-2 font-mono text-[11px] text-zinc-500">{s.result}</div>
               </li>
             ))}
@@ -80,8 +80,8 @@ export default function Assistant({ focusSku, demoMode }: { focusSku?: string; d
             send(input);
           }}
         >
-          <input className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Вопрос ассистенту" />
-          <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={busy}>
+          <input className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-500" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Вопрос ассистенту" />
+          <button className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={busy}>
             →
           </button>
         </form>

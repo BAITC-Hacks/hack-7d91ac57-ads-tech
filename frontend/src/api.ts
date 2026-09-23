@@ -96,6 +96,8 @@ export type Health = {
     in_transit_lines: number;
     today: string;
     default_warehouse: string;
+    source?: string;
+    notes?: string[];
   };
 };
 

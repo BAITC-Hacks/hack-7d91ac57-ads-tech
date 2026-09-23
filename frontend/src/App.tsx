@@ -15,6 +15,7 @@ export default function App() {
   const [over, setOver] = useState<Overstock | null>(null);
   const [showOver, setShowOver] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefErr, setBriefErr] = useState<string | null>(null);
@@ -173,12 +174,21 @@ export default function App() {
   const ready = health?.calculation_ready ?? false;
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      <header className="border-b border-zinc-200 bg-white">
+    <div className="min-h-screen bg-page text-zinc-900">
+      <header className="border-b-[3px] border-accent-400 bg-white shadow-sm">
+        <div className="bg-brand-900 text-white">
+          <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-2 px-6 py-1.5 text-xs">
+            <span className="font-medium">Сервис отдела закупа · автоматический расчёт заказов поставщикам</span>
+            <span className="text-white/70">прототип HackAlem AI 2026 · команда Ads Tech</span>
+          </div>
+        </div>
         <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
-          <div>
-            <h1 className="text-lg font-semibold leading-tight">Расчёт заказов поставщикам</h1>
-            <p className="text-xs text-zinc-500">ТОО «Электрокомплект» · отдел закупа</p>
+          <div className="flex items-center gap-4">
+            <img src="/ekt-logo.svg" alt="Группа компаний Электрокомплект" className="h-9 w-auto" />
+            <div className="border-l border-zinc-200 pl-4">
+              <h1 className="text-lg font-bold leading-tight text-brand-900">Заказы поставщикам</h1>
+              <p className="text-xs text-zinc-500">{health?.data.source || "отдел закупа"}</p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Chip ok={!!health && !healthErr} label={healthErr ? `backend недоступен: ${healthErr}` : health ? `backend ok · ${health.demo_mode ? "DEMO без LLM" : health.model}` : "подключение…"} />
@@ -188,15 +198,20 @@ export default function App() {
                 <Chip label={`продажи ${health.data.sales_from} … ${health.data.sales_to}`} />
                 <Chip label={`${health.data.suppliers} поставщ. · ${health.data.in_transit_lines} поз. в пути · ${health.data.stockout_periods} периодов дефицита`} />
                 <Chip ok={ready} label={ready ? "расчёт готов" : "идёт предрасчёт…"} />
+                {health.data.notes && health.data.notes.length > 0 && (
+                  <button onClick={() => setShowNotes(!showNotes)} className="rounded-full bg-accent-300/40 px-2.5 py-1 text-brand-900 ring-1 ring-accent-400 hover:bg-accent-300/70">
+                    Допущения данных ({health.data.notes.length})
+                  </button>
+                )}
               </>
             )}
           </div>
           <div className="ml-auto flex items-center gap-2 text-xs">
-            <button onClick={loadBrief} disabled={briefBusy || !health} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+            <button onClick={loadBrief} disabled={briefBusy || !health} className="rounded-lg bg-brand-600 px-2.5 py-1.5 font-medium text-white hover:bg-brand-900 disabled:opacity-50">
               {briefBusy ? "агент работает…" : "Утренняя сводка агента"}
             </button>
             <span className="text-zinc-500">Утверждённых заказов: {approvedCount}</span>
-            <label className="cursor-pointer rounded-lg bg-zinc-800 px-2.5 py-1.5 text-white hover:bg-zinc-700" title="Загрузите 12 файлов Excel выгрузки 1С (IEK и Systeme Electric) как есть">
+            <label className="cursor-pointer rounded-lg bg-brand-900 px-2.5 py-1.5 text-white hover:bg-brand-700" title="Загрузите 12 файлов Excel выгрузки 1С (IEK и Systeme Electric) как есть">
               {importing ? "импорт…" : "Импорт выгрузок 1С (xlsx)"}
               <input type="file" accept=".xlsx" multiple className="hidden" onChange={onImportPartner} disabled={importing} />
             </label>
@@ -212,6 +227,18 @@ export default function App() {
           </div>
         </div>
         {uploadMsg && <div className="mx-auto max-w-[1500px] px-6 pb-2 text-xs text-zinc-600">{uploadMsg}</div>}
+        {showNotes && health?.data.notes && (
+          <div className="mx-auto max-w-[1500px] px-6 pb-3">
+            <div className="rounded-md border border-accent-400 bg-accent-300/20 p-3 text-xs text-zinc-800">
+              <div className="mb-1 font-semibold text-brand-900">Источник: {health.data.source}. Что взято из данных, а что принято допущением:</div>
+              <ul className="list-disc space-y-0.5 pl-5">
+                {health.data.notes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="mx-auto grid max-w-[1500px] gap-6 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -251,7 +278,7 @@ export default function App() {
             <Field label="Плановый прирост, %/год">
               <input type="number" value={growthPlan} onChange={(e) => setGrowthPlan(e.target.value)} placeholder="0" className="w-24 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
             </Field>
-            <button onClick={run} disabled={running || !health} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+            <button onClick={run} disabled={running || !health} className="rounded-lg bg-accent-400 px-5 py-2 text-sm font-semibold text-brand-900 hover:bg-accent-500 disabled:opacity-50">
               {running ? "Считаю…" : "Рассчитать"}
             </button>
             {result && <span className="text-xs text-zinc-500">за {result.elapsed_ms} мс · дата расчёта {result.today}</span>}
@@ -298,7 +325,7 @@ export default function App() {
                           <tbody>
                             {over.overstock.slice(0, 10).map((r) => (
                               <tr key={r.sku} className="border-t border-amber-100">
-                                <td className="py-1 pr-2 font-mono"><button className="text-indigo-700 hover:underline" onClick={() => openSku(r.sku)}>{r.sku}</button></td>
+                                <td className="py-1 pr-2 font-mono"><button className="text-brand-600 hover:underline" onClick={() => openSku(r.sku)}>{r.sku}</button></td>
                                 <td className="max-w-[260px] truncate py-1 pr-2" title={r.name}>{r.name}</td>
                                 <td className="py-1 pr-2 text-right tabular-nums">{r.months_of_cover} мес.</td>
                                 <td className="py-1 text-right tabular-nums">{fmt(r.excess_units)} шт{r.excess_value ? ` · ${fmt(r.excess_value)} ₸` : ""}</td>
@@ -313,7 +340,7 @@ export default function App() {
                           <tbody>
                             {over.dead.slice(0, 10).map((r) => (
                               <tr key={r.sku} className="border-t border-amber-100">
-                                <td className="py-1 pr-2 font-mono"><button className="text-indigo-700 hover:underline" onClick={() => openSku(r.sku)}>{r.sku}</button></td>
+                                <td className="py-1 pr-2 font-mono"><button className="text-brand-600 hover:underline" onClick={() => openSku(r.sku)}>{r.sku}</button></td>
                                 <td className="max-w-[260px] truncate py-1 pr-2" title={r.name}>{r.name}</td>
                                 <td className="py-1 text-right tabular-nums">{fmt(r.stock)} шт{r.value ? ` · ${fmt(r.value)} ₸` : ""}</td>
                               </tr>
@@ -379,7 +406,7 @@ export default function App() {
               <section className="flex flex-wrap items-center gap-2">
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по артикулу или названию" className="w-72 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm" />
                 {(["", "critical", "high", "normal"] as const).map((u) => (
-                  <button key={u} onClick={() => setUrgencyFilter(u)} className={`rounded-full border px-3 py-1 text-xs ${urgencyFilter === u ? "border-indigo-600 bg-indigo-600 text-white" : "border-zinc-300 bg-white text-zinc-700"}`}>
+                  <button key={u} onClick={() => setUrgencyFilter(u)} className={`rounded-full border px-3 py-1 text-xs ${urgencyFilter === u ? "border-brand-600 bg-brand-600 text-white" : "border-zinc-300 bg-white text-zinc-700"}`}>
                     {u === "" ? "Все" : u === "critical" ? "Критичные" : u === "high" ? "Высокие" : "Плановые"}
                   </button>
                 ))}
@@ -429,7 +456,7 @@ export default function App() {
                   <ul className="space-y-1">
                     {brief.steps.map((s, i) => (
                       <li key={i} className="flex items-start gap-2 rounded border border-zinc-200 bg-zinc-50 p-2 text-xs">
-                        <span className="font-mono text-indigo-700">{s.tool}</span>
+                        <span className="font-mono text-brand-600">{s.tool}</span>
                         <span className="flex-1 text-zinc-600">{s.result}</span>
                         {s.ms !== undefined && <span className="text-zinc-400">{s.ms} мс</span>}
                       </li>
@@ -449,7 +476,7 @@ export default function App() {
           <div className="h-full w-full max-w-3xl overflow-y-auto bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="font-mono text-sm text-indigo-700">{detailSku}</div>
+                <div className="font-mono text-sm text-brand-600">{detailSku}</div>
                 <h2 className="text-lg font-semibold">{detail?.name ?? "…"}</h2>
                 {detail && (
                   <p className="text-sm text-zinc-500">
@@ -518,7 +545,7 @@ export default function App() {
                     <Field label="Срок поставки, дн.">
                       <input type="number" value={whatIf.lead} onChange={(e) => setWhatIf({ ...whatIf, lead: e.target.value })} placeholder={String(detail.lead_time_days)} className="w-28 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
                     </Field>
-                    <button onClick={runWhatIf} className="rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-white">Пересчитать</button>
+                    <button onClick={runWhatIf} className="rounded-lg bg-brand-900 px-3 py-2 text-sm font-medium text-white">Пересчитать</button>
                   </div>
                   {whatIfRes && (
                     <div className="mt-3 text-sm">
@@ -546,7 +573,7 @@ function Sparkline({ values }: { values: number[] }) {
   const pts = values.map((v, i) => `${(i / Math.max(1, values.length - 1)) * (w - 2) + 1},${h - 1 - (v / max) * (h - 4)}`).join(" ");
   return (
     <svg width={w} height={h} className="block">
-      <polyline points={pts} fill="none" stroke="#4f46e5" strokeWidth={1.5} />
+      <polyline points={pts} fill="none" stroke="#0b4366" strokeWidth={1.5} />
     </svg>
   );
 }
@@ -566,7 +593,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "red" | "amber" | "indigo" }) {
-  const cls = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : tone === "indigo" ? "text-indigo-700" : "text-zinc-900";
+  const cls = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : tone === "indigo" ? "text-brand-600" : "text-zinc-900";
   return (
     <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
       <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
