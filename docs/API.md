@@ -51,6 +51,9 @@ Base URL в dev: `/api` (Vite проксирует на `http://localhost:8000`)
  "note":"...","top":[{"sku":"KBL-001","name":"...","supplier":"...","naive_qty":900,"recommended_qty":600,"diff_qty":300,"diff_money":150000,"reason":"выброс|дефицит|сезон/тренд/страховой"}]}
 ```
 
+## GET /api/backtest
+Бэктест вне выборки (после старта считается в фоне и кэшируется на диск; до готовности 202 `{"status":"computing"}`). `{warehouse, labels, models, validation:{…}, test:{cutoff, months, skus_evaluated, regular_skus, regular_vs_clean:{model:{wape,bias}}, regular_vs_raw, intermittent_vs_clean, wins_regular, calibration:{target_pct, coverage_raw_pct, multiplier, multiplier_from_previous_window, coverage_out_of_sample_pct}}, production:{model, ss_multiplier, skus_with_error}, note}`. Параметр расчёта `ss_calibrated` (bool, по умолчанию true) в `POST /api/replenish/run`; в строках заказа `forecast_wape`, `forecast_confidence`, `ss_multiplier`, `forecast_model`.
+
 ## GET /api/agent/daily-brief?warehouse=…
 Утренний агент-закупщик: `{brief: "текст сводки", facts: {...}, steps: [{tool,args,result,ms}], llm: bool, generated_at}`. Без LLM — шаблон по фактам инструментов; с LLM — живой текст.
 
