@@ -6,6 +6,22 @@ from .llm import tool
 from .replenish import Params, compute_sku
 
 
+def resolve_sku(raw: str) -> str | None:
+    """Tolerant SKU lookup: exact 1C code, code with/without trailing «_», supplier article, then name substring."""
+    ds = state.get_ds()
+    skus = set(ds.products["sku"])
+    q = (raw or "").strip().strip("«»\"'")
+    for cand in (q, q.upper(), q + "_", q.rstrip("_"), q.upper() + "_"):
+        if cand in skus:
+            return cand
+    if "article" in ds.products.columns:
+        hit = ds.products[ds.products["article"].astype(str).str.upper() == q.upper()]
+        if not hit.empty:
+            return str(hit["sku"].iloc[0])
+    hit = ds.products[ds.products["name"].astype(str).str.contains(q, case=False, na=False, regex=False)]
+    return str(hit["sku"].iloc[0]) if not hit.empty else None
+
+
 def _strip(r: dict) -> dict:
     keep = ["sku", "name", "category", "warehouse", "supplier", "supplier_id", "recommended_qty", "urgency", "days_of_cover",
             "lead_time_days", "stock", "in_transit", "forecast_daily", "forecast_period_qty", "safety_stock", "seasonal_factor",
@@ -24,19 +40,15 @@ def run_replenishment(warehouse: str | None = None, category: str | None = None)
 
 @tool(
     "Объяснить расчёт по артикулу: прогноз, сезонность, тренд, исключённые выбросы, упущенный спрос, страховой запас, остаток, в пути, итоговое количество.",
-    {"type": "object", "properties": {"sku": {"type": "string"}, "warehouse": {"type": "string"}}, "required": ["sku"]},
+    {"type": "object", "properties": {"sku": {"type": "string", "description": "код артикула ровно как в вопросе пользователя, например 010300016_ (подчёркивание на конце — часть кода 1С)"}, "warehouse": {"type": "string"}}, "required": ["sku"]},
 )
 def explain_sku(sku: str, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
     warehouse = warehouse or ds.default_warehouse()
-    sku = sku.strip()
-    if sku not in set(ds.products["sku"]):
-        sku = sku.upper()
-    if sku not in set(ds.products["sku"]):
-        match = ds.products[ds.products["name"].str.contains(sku, case=False, na=False)]
-        if match.empty:
-            return {"error": f"артикул {sku} не найден"}
-        sku = str(match["sku"].iloc[0])
+    found = resolve_sku(sku)
+    if not found:
+        return {"error": f"артикул {sku} не найден; коды 1С имеют вид 010300016_ (с подчёркиванием) или LMP-006"}
+    sku = found
     r = compute_sku(ds, sku, warehouse, Params(warehouse=warehouse))
     s = r.pop("_series")
     out = _strip(r)
@@ -68,11 +80,10 @@ def list_orders(supplier: str | None = None, urgency: str | None = None, warehou
 def what_if(sku: str, in_transit: float | None = None, stock: float | None = None, lead_time_days: int | None = None, service_level: float | None = None, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
     warehouse = warehouse or ds.default_warehouse()
-    sku = sku.strip()
-    if sku not in set(ds.products["sku"]):
-        sku = sku.upper()
-    if sku not in set(ds.products["sku"]):
-        return {"error": f"артикул {sku} не найден"}
+    found = resolve_sku(sku)
+    if not found:
+        return {"error": f"артикул {sku} не найден; коды 1С имеют вид 010300016_ (с подчёркиванием)"}
+    sku = found
     p = Params(warehouse=warehouse)
     base = compute_sku(ds, sku, warehouse, p)
     base.pop("_series", None)

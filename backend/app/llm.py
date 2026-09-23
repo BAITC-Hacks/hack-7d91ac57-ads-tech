@@ -123,7 +123,11 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
             log.exception("LLM call failed")
             return {"answer": f"LLM недоступен ({type(e).__name__}). Включите DEMO_MODE=true или проверьте LLM_API_KEY. Расчёт и экспорт работают без LLM.", "steps": steps, "messages": history}
         msg = resp.choices[0].message
-        history.append(msg.model_dump(exclude_none=True))
+        # clean, provider-neutral assistant message (OpenAI, NVIDIA NIM, vLLM all accept this shape)
+        am: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+        if msg.tool_calls:
+            am["tool_calls"] = [{"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments or "{}"}} for tc in msg.tool_calls]
+        history.append(am)
         if not msg.tool_calls:
             return {"answer": msg.content or "", "steps": steps, "messages": history}
         for tc in msg.tool_calls:

@@ -77,7 +77,7 @@ def template_brief(f: dict[str, Any]) -> str:
     if f["late_transit_lines"]:
         lines.append(f"6. Внимание: {f['late_transit_lines']} строк товара в пути с прошедшей датой поступления, уточнить у поставщика.")
     lines.append("")
-    lines.append(f"Исключено разовых продаж: {s['outliers_excluded_total']}, учтён упущенный спрос: {_fmt(s['lost_demand_total'])} шт. Черновики заказов по поставщикам готовы на дашборде, утверждение за вами; автоматически ничего не отправляется.")
+    lines.append(f"Исключено из регулярного спроса разовых продаж (накладных): {s['outliers_excluded_total']}; учтён упущенный спрос: {_fmt(s['lost_demand_total'])} шт. Черновики заказов по поставщикам готовы на дашборде, утверждение за вами; автоматически ничего не отправляется.")
     return "\n".join(lines)
 
 
@@ -92,13 +92,15 @@ async def daily_brief(warehouse: str | None = None) -> dict[str, Any]:
         try:
             prompt = (
                 "Ты ассистент менеджера отдела закупа «Электрокомплект». Ниже факты, полученные инструментами (единственный источник чисел). "
-                "Напиши утреннюю сводку на русском: 5–8 коротких пунктов, что сделать сегодня, с числами и артикулами из фактов. "
-                "Не выдумывай числа, не говори, что заказ отправлен. В конце одной строкой: что требует решения человека.\n\nФакты:\n" + template_brief(facts)
+                "Напиши блок «Главное сегодня»: ровно 3 коротких пункта на русском, что менеджеру сделать в первую очередь и почему, с артикулами и числами из фактов. "
+                "Правила: не меняй сроки («на этой неделе» не равно «сегодня»), не путай позиции и штуки, не выдумывай числа, не говори, что заказ отправлен. "
+                "Без вступления и без заключения.\n\nФакты:\n" + template_brief(facts)
             )
             t0 = time.perf_counter()
             out = await chat([{"role": "user", "content": prompt}])
-            if out and len(out) > 80:
-                text = out
+            if out and len(out) > 40:
+                # LLM adds a short prioritised summary; the factual brief below stays verbatim from the tools
+                text = "Главное сегодня (сформулировано LLM по фактам ниже):\n" + out.strip() + "\n\n———\n" + text
                 used_llm = True
             steps.append({"tool": "write_brief (LLM)", "args": f'{{"model":"{s.llm_model}"}}', "result": text[:200], "ms": int((time.perf_counter() - t0) * 1000)})
         except Exception as e:  # noqa: BLE001
