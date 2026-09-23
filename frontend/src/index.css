@@ -139,3 +139,10 @@ body {
   .viz-card, .viz-hero, .viz-gx, .viz-gy, .ai-dock, .ai-dock::before, .viz-live { animation: none; }
   .viz-draw { animation: none; stroke-dashoffset: 0; }
 }
+
+/* Кнопка обзора: спокойная, в цвет бренда; только мягкое появление снизу */
+@keyframes viz-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.viz-dock { animation: viz-rise 0.35s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .viz-dock { animation: none; }
+}

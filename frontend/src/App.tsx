@@ -6,7 +6,7 @@ import SignalsTab from "./components/SignalsTab";
 import Assistant from "./components/Assistant";
 import OrdersTable, { UrgencyBadge } from "./components/OrdersTable";
 import SkuChart from "./components/SkuChart";
-import Dashboard, { Sparkle } from "./components/Dashboard";
+import Dashboard from "./components/Dashboard";
 
 type Tab = "orders" | "signals" | "news" | "accuracy" | "overstock" | "impact" | "trends";
 type SortKey = "urgency" | "value" | "qty" | "cover";
@@ -882,14 +882,20 @@ export default function App({ user, onLogout, onAdmin }: { user: User; onLogout:
       )}
       {result && !running && !showViz && (
         <div className="pointer-events-none fixed inset-x-0 bottom-5 z-20 flex justify-center px-4 lg:pr-[380px]">
-          <div key={result.generated_at} className="ai-dock pointer-events-auto relative rounded-full">
-            <button data-tour="viz" onClick={() => setShowViz(true)} className="ai-btn flex items-center gap-3 rounded-full py-2 pl-2 pr-6 text-left text-white">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/20 ring-1 ring-white/40 backdrop-blur">
-                <Sparkle className="h-5 w-5" />
+          <div key={result.generated_at} className="viz-dock pointer-events-auto relative rounded-full">
+            <button
+              data-tour="viz"
+              onClick={() => setShowViz(true)}
+              className="flex items-center gap-3 rounded-full bg-brand-900 py-2 pl-2 pr-6 text-left text-white shadow-lg shadow-brand-900/25 transition-colors hover:bg-brand-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/10">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <path d="M5 19v-7M10 19V6M15 19v-9M20 19v-4M3 19h18" />
+                </svg>
               </span>
               <span className="leading-tight">
-                <span className="block text-sm font-bold">Показать всё на графиках</span>
-                <span className="block text-[11px] font-medium text-white/80">
+                <span className="block text-sm font-semibold">Показать всё на графиках</span>
+                <span className="block text-[11px] text-white/70">
                   отчёт готов · {fmt(result.summary.positions)} позиций · {fmt(result.summary.critical)} критичных
                 </span>
               </span>
