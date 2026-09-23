@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(git status:*)", "Bash(git log:*)", "Bash(git diff:*)", "Bash(git pull:*)",
+      "Bash(docker compose:*)", "Bash(docker ps:*)", "Bash(docker logs:*)", "Bash(docker image:*)",
+      "Bash(npm run:*)", "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npx:*)",
+      "Bash(python3:*)", "Bash(./backend/.venv/bin/python:*)", "Bash(./backend/.venv/bin/pip:*)", "Bash(backend/.venv/bin/python:*)", "Bash(backend/.venv/bin/pip:*)", "Bash(backend/.venv/bin/uvicorn:*)", "Bash(backend/.venv/bin/pytest:*)",
+      "Bash(curl localhost:*)", "Bash(curl -s localhost:*)", "Bash(curl -sf localhost:*)", "Bash(curl http://localhost:*)", "Bash(curl -s http://localhost:*)", "Bash(curl -sf http://localhost:*)", "Bash(curl -X POST http://localhost:*)", "Bash(curl -sf -X POST http://localhost:*)",
+      "Bash(bash scripts/verify.sh:*)", "Bash(bash scripts/autocommit.sh:*)", "Bash(make:*)",
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)", "Bash(wc:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)", "Bash(sed -n:*)", "Bash(date:*)", "Bash(ss -ltn:*)", "Bash(pkill -f uvicorn:*)", "Bash(sleep:*)",
+      "Read", "Edit", "Write", "Glob", "Grep"
+    ],
+    "deny": [
+      "Bash(git push --force:*)", "Bash(git reset --hard:*)", "Bash(rm -rf .git:*)", "Read(.env)", "Bash(cat .env)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "bash scripts/commit_reminder.sh" } ] }
+    ]
+  }
+}
