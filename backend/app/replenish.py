@@ -249,9 +249,15 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     raw_daily = daily_series(tx, start, end, "qty")
     clean_daily = daily_series(tx, start, end, "qty_clean")
     so = ds.stockouts[(ds.stockouts["sku"] == sku) & (ds.stockouts["warehouse"] == warehouse)]
+    clean_no_impute = clean_daily.copy()
     clean_daily, stockout_info = impute_stockouts(clean_daily, so)
     lost = int(sum(i["lost_demand_qty"] for i in stockout_info))
     stockout_days = int(sum(i["days"] for i in stockout_info))
+    # explicit lost-demand uplift over the last 12 months: observed sales understate demand
+    last_year_imputed = float(clean_daily[-365:].sum())
+    last_year_observed = float(clean_no_impute[-365:].sum())
+    lost_uplift = (last_year_imputed / last_year_observed) if last_year_observed > 0 else 1.0
+    lost_uplift = float(min(lost_uplift, 1.5))
 
     monthly = clean_daily.resample("MS").sum()
     monthly.index = monthly.index.to_period("M")
@@ -259,6 +265,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     if len(monthly) and (end.day < calendar.monthrange(end.year, end.month)[1] - 1):
         monthly = monthly.iloc[:-1]
     idx, level, growth_hist, r2 = seasonal_and_trend(monthly)
+    level *= lost_uplift
     plan_month = float(prod.get("growth_plan_pct_year", 0) or 0) / 100 / 12
     growth = growth_hist + plan_month
     last_month = monthly.index[-1] if len(monthly) else pd.Period(end, freq="M")
@@ -311,7 +318,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     if outliers:
         parts_txt.append(f"исключено {len(outliers)} разовых продаж на {_fmt(sum(o['qty'] for o in outliers), 0)} шт ({outliers[0]['reason']})")
     if lost:
-        parts_txt.append(f"в {stockout_days} дн. дефицита учтён упущенный спрос {_fmt(lost, 0)} шт")
+        parts_txt.append(f"в {stockout_days} дн. дефицита учтён упущенный спрос {_fmt(lost, 0)} шт" + (f" (+{_fmt((lost_uplift - 1) * 100)}% к уровню за год)" if lost_uplift > 1.001 else ""))
     parts_txt.append(f"страховой запас {_fmt(safety, 0)} шт (уровень сервиса {int(sl * 100)}%)")
     parts_txt.append(f"остаток {_fmt(stock, 0)}, в пути {_fmt(in_transit, 0)}")
     if rec > 0:
@@ -354,6 +361,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         "plan_pct_year": round(plan_month * 1200, 1),
         "stockout_days": stockout_days,
         "lost_demand_qty": lost,
+        "lost_demand_uplift_pct": round((lost_uplift - 1) * 100, 2),
         "outliers_excluded": len(outliers),
         "outlier_qty_excluded": int(sum(o["qty"] for o in outliers)),
         "justification": justification,

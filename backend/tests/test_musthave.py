@@ -71,7 +71,7 @@ def test_seasonality_and_growth(ds):
 
 # 3. упущенный спрос в stockout: потребность скорректирована вверх относительно сырых продаж
 def test_stockout_compensation(ds):
-    so = ds.stockouts.iloc[0]
+    so = ds.stockouts.sort_values("date_to").iloc[-1]  # дефицит в пределах последнего года
     sku, wh = so["sku"], so["warehouse"]
     with_so = _rec(ds, sku, wh)
     assert with_so["lost_demand_qty"] > 0 and with_so["stockout_days"] > 0
@@ -79,6 +79,7 @@ def test_stockout_compensation(ds):
     ds_raw.stockouts = ds_raw.stockouts.iloc[0:0]
     raw = _rec(ds_raw, sku, wh)
     assert with_so["forecast_period_qty"] > raw["forecast_period_qty"]
+    assert with_so["lost_demand_uplift_pct"] > 0
 
 
 # 4. разовые крупные заказы (в т.ч. одному клиенту) исключаются из регулярной потребности
