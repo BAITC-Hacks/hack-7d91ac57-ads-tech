@@ -84,7 +84,7 @@ def generate(out_dir: Path, seed: int = SEED) -> dict[str, int]:
             base = float(np.exp(rng.uniform(np.log(2), np.log(45))))  # units/day
             growth = float(rng.choice([0.0, 0.0, 0.01, 0.02, 0.03, -0.01], p=[0.35, 0.15, 0.2, 0.15, 0.1, 0.05]))
             pack = int(rng.choice([1, 1, 5, 10, 20, 100] if cat != "Кабель" else [100, 100, 200]))
-            price = round(float(np.exp(rng.uniform(np.log(150), np.log(45000)))), 2)
+            price = round(float(np.exp(rng.uniform(np.log(120), np.log(900)))), 2) if cat == "Кабель" else round(float(np.exp(rng.uniform(np.log(300), np.log(45000)))), 2)
             supplier = rng.choice(SUPPLIER_FOR_CAT[cat])
             products.append({"sku": sku, "name": name, "category": cat, "supplier_id": supplier, "pack_size": pack, "unit_price": price, "growth_plan_pct_year": plan})
             truth[sku] = {"base": base, "growth": growth, "season": season, "pack": pack, "cat": cat}
@@ -126,6 +126,7 @@ def generate(out_dir: Path, seed: int = SEED) -> dict[str, int]:
     client_w /= client_w.sum()
     weekday_f = [1.05, 1.1, 1.1, 1.05, 1.0, 0.45, 0.25]
     rows = []
+    price_of = dict(zip(products_df["sku"], products_df["unit_price"]))
     wh_share = {"Главный": 1.0, "Филиал Алматы": 0.3}
     branch_skus = set(rng.choice(skus, 30, replace=False))
     d = START
@@ -133,7 +134,8 @@ def generate(out_dir: Path, seed: int = SEED) -> dict[str, int]:
         m = _months_between(START, d)
         for s in skus:
             t = truth[s]
-            lam = t["base"] * t["season"][d.month - 1] * ((1 + t["growth"]) ** m) * weekday_f[d.weekday()]
+            unit_mult = t["pack"] if t["cat"] == "Кабель" else 1  # cable sold in metres, ~pack per typical order
+            lam = t["base"] * unit_mult * t["season"][d.month - 1] * ((1 + t["growth"]) ** m) * weekday_f[d.weekday()]
             for wh, share in wh_share.items():
                 if wh != "Главный" and s not in branch_skus:
                     continue
@@ -145,8 +147,7 @@ def generate(out_dir: Path, seed: int = SEED) -> dict[str, int]:
                 n_tx = max(1, min(4, int(rng.poisson(1.5))))
                 parts = np.maximum(1, np.round(rng.dirichlet(np.ones(n_tx)) * qty)).astype(int)
                 for q in parts:
-                    price = float(products_df.loc[products_df.sku == s, "unit_price"].iloc[0])
-                    rows.append({"date": d, "sku": s, "qty": int(q) * (t["pack"] if t["cat"] == "Кабель" else 1), "client_id": str(rng.choice(clients, p=client_w)), "price": price, "warehouse": wh})
+                    rows.append({"date": d, "sku": s, "qty": int(q), "client_id": str(rng.choice(clients, p=client_w)), "price": price_of[s], "warehouse": wh})
         d += timedelta(days=1)
     sales_df = pd.DataFrame(rows)
     # inject one-off big orders (tenders) to a single client

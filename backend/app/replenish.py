@@ -272,9 +272,13 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     fc_total, fc_parts = forecast_horizon(ds.today, horizon, level, growth, idx, last_month)
     fc_daily = fc_total / horizon if horizon else 0.0
 
-    recent = clean_daily[-90:] if len(clean_daily) >= 90 else clean_daily
-    sigma = float(recent.std()) if len(recent) > 1 else 0.0
-    safety = z_for(sl) * sigma * math.sqrt(horizon)
+    # demand variability: weekly sums over the last 26 weeks, deseasonalized (removes weekday pattern and
+    # seasonal drift, keeps genuine randomness), scaled to the horizon
+    weekly = clean_daily[-182:].resample("W").sum() if len(clean_daily) >= 14 else clean_daily.resample("W").sum()
+    weekly = weekly / np.array([idx[ts.month] for ts in weekly.index])
+    sigma_week = float(weekly.std()) if len(weekly) > 2 else 0.0
+    sigma = sigma_week / math.sqrt(7)
+    safety = z_for(sl) * sigma_week * math.sqrt(horizon / 7)
 
     stock_row = ds.stock[(ds.stock["sku"] == sku) & (ds.stock["warehouse"] == warehouse)]
     stock = float(overrides["stock"]) if overrides.get("stock") is not None else (float(stock_row["stock"].iloc[0]) if len(stock_row) else 0.0)
@@ -461,12 +465,12 @@ def export_rows(result: dict[str, Any], supplier_id: str | None = None) -> pd.Da
     } for r in rows])
 
 
-def naive_need(ds: Dataset, sku: str, warehouse: str, horizon: int) -> float:
-    """Excel-style baseline: mean of raw sales over the whole history × horizon − stock − in transit. No outlier
-    handling, no stockout compensation, no seasonality, no safety stock."""
+def naive_need(ds: Dataset, sku: str, warehouse: str, horizon: int, window_days: int = 90) -> float:
+    """Excel-style baseline as purchasing managers usually do it: mean raw daily sales over the last 90 days ×
+    horizon − stock − in transit. No outlier handling, no stockout compensation, no seasonality, no safety stock."""
     tx = ds.sales[(ds.sales["sku"] == sku) & (ds.sales["warehouse"] == warehouse)]
-    days = max((ds.today - ds.sales["date"].min().date()).days, 1)
-    mean_daily = float(tx["qty"].sum()) / days
+    since = pd.Timestamp(ds.today - timedelta(days=window_days))
+    mean_daily = float(tx.loc[tx["date"] >= since, "qty"].sum()) / window_days
     stock_row = ds.stock[(ds.stock["sku"] == sku) & (ds.stock["warehouse"] == warehouse)]
     stock = float(stock_row["stock"].iloc[0]) if len(stock_row) else 0.0
     it = ds.in_transit[(ds.in_transit["sku"] == sku) & (ds.in_transit["warehouse"] == warehouse)]
@@ -475,15 +479,20 @@ def naive_need(ds: Dataset, sku: str, warehouse: str, horizon: int) -> float:
 
 
 def impact(ds: Dataset, result: dict[str, Any]) -> dict[str, Any]:
-    """Compare engine recommendations with the naive baseline, in units and money."""
+    """Compare engine recommendations with the naive baseline, in units and money, over ALL positions of the
+    warehouse (including those where the engine recommends nothing but the naive method would order)."""
+    p = Params(**{**result["params"], "include_zero": True})
+    full = run(ds, p)
     rows = []
     excess_qty = deficit_qty = excess_money = deficit_money = 0.0
     prices = dict(zip(ds.products["sku"], ds.products.get("unit_price", pd.Series(dtype=float)).fillna(0)))
-    for r in result["orders"]:
+    for r in full["orders"]:
         nv = max(naive_need(ds, r["sku"], r["warehouse"], r["lead_time_days"] + r["review_days"]), 0.0)
         ours = float(r["recommended_qty"])
         price = float(prices.get(r["sku"], 0.0))
         diff = nv - ours
+        if abs(diff) < 1:
+            continue
         if diff > 0:
             excess_qty += diff
             excess_money += diff * price
@@ -493,11 +502,12 @@ def impact(ds: Dataset, result: dict[str, Any]) -> dict[str, Any]:
         rows.append({"sku": r["sku"], "name": r["name"], "supplier": r["supplier"], "naive_qty": int(round(nv)), "recommended_qty": int(ours), "diff_qty": int(round(diff)), "diff_money": round(diff * price), "reason": "выброс" if r["outliers_excluded"] else "дефицит" if r["lost_demand_qty"] else "сезон/тренд/страховой"})
     rows.sort(key=lambda x: -abs(x["diff_money"]))
     return {
-        "positions": len(rows),
+        "positions": len(full["orders"]),
+        "positions_differ": len(rows),
         "naive_overorder_qty": int(round(excess_qty)),
         "naive_overorder_money": round(excess_money),
         "naive_underorder_qty": int(round(deficit_qty)),
         "naive_underorder_money": round(deficit_money),
-        "note": "Наивный расчёт: среднее по всей истории × горизонт − остаток − в пути; без очистки выбросов, компенсации дефицита, сезонности и страхового запаса.",
+        "note": "Наивный (Excel) расчёт: среднее сырых продаж за последние 90 дней × горизонт − остаток − в пути; без очистки выбросов, компенсации дефицита, сезонности и страхового запаса.",
         "top": rows[:15],
     }
