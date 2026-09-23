@@ -50,4 +50,4 @@
 
 ## AI-инструменты разработки
 
-Claude Code, OpenAI Codex, ChatGPT — генерация и ревью кода (разрешено п. 5.4.12). Подробно: AI_USAGE.md.
+Claude Code, OpenAI Codex, ChatGPT (разрешено п. 5.4.12). Код в репозитории написан с Claude Code; Codex запускался, но кода не внёс. Подробно: AI_USAGE.md.

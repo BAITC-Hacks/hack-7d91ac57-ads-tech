@@ -8,7 +8,7 @@ Pipeline per (sku, warehouse):
   3. monthly series → seasonal indices (ratio-to-trend, 2 iterations, shrunk when
      history is short) → linear trend on deseasonalized series → growth %/month
   4. forecast over horizon H = lead_time + review_days, month-aware
-  5. safety stock = z(service_level) * sigma_daily * sqrt(H)
+  5. safety stock = z(service_level) * sigma(weekly demand, 26 weeks, deseasonalized) * sqrt(H/7) * k (backtest calibration)
   6. need = forecast + safety - stock - in_transit(eta <= H) → pack rounding, MOQ
   7. urgency by days of cover vs lead time; templated justification (no LLM needed)
 """
