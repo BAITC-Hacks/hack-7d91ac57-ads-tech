@@ -358,6 +358,7 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     return {
         "sku": sku,
         "name": str(prod["name"]),
+        "article": str(prod["article"]) if "article" in prod.index and pd.notna(prod.get("article")) and str(prod.get("article")) not in ("", "nan") else "",
         "category": str(prod["category"]),
         "warehouse": warehouse,
         "supplier_id": str(sup["supplier_id"]),
