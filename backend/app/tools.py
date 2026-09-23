@@ -28,6 +28,38 @@ def _wh(warehouse: str | None) -> str:
     return warehouse if warehouse in set(ds.stock["warehouse"].unique()) else ds.default_warehouse()
 
 
+def _n(x) -> str:
+    try:
+        return f"{float(x):,.0f}".replace(",", " ") if float(x) == int(float(x)) else f"{float(x):,.1f}".replace(",", " ").replace(".", ",")
+    except (TypeError, ValueError):
+        return str(x)
+
+
+def _sum_run(d: dict) -> str:
+    s = d.get("summary", {})
+    return f"к заказу {_n(s.get('positions', 0))} позиций у {_n(s.get('suppliers', 0))} поставщиков, критичных {_n(s.get('critical', 0))}"
+
+
+def _sum_explain(d: dict) -> str:
+    return (f"{d.get('sku')}: рекомендовано {_n(d.get('recommended_qty'))} шт, остаток {_n(d.get('stock'))}, в пути {_n(d.get('in_transit'))}, "
+            f"прогноз {_n(d.get('forecast_daily'))} шт/день, страховой запас {_n(d.get('safety_stock'))}")
+
+
+def _sum_list(d: dict) -> str:
+    rows = d.get("orders", [])
+    head = ", ".join(f"{r.get('sku')} ({_n(r.get('recommended_qty'))} шт)" for r in rows[:3])
+    return f"найдено {_n(d.get('count', len(rows)))} позиций" + (f": {head}" if head else "")
+
+
+def _sum_whatif(d: dict) -> str:
+    sc = d.get("scenario", {})
+    return f"{sc.get('sku', '')}: было {_n(d.get('base_qty'))} шт, станет {_n(d.get('scenario_qty'))} шт (изменение {_n(d.get('delta_qty'))})"
+
+
+def _sum_email(d: dict) -> str:
+    return "черновик письма поставщику готов, ничего не отправлено"
+
+
 def _strip(r: dict) -> dict:
     keep = ["sku", "name", "category", "warehouse", "supplier", "supplier_id", "recommended_qty", "urgency", "days_of_cover",
             "lead_time_days", "stock", "in_transit", "forecast_daily", "forecast_period_qty", "safety_stock", "seasonal_factor",
@@ -47,6 +79,8 @@ def run_replenishment(warehouse: str | None = None, category: str | None = None)
 @tool(
     "Объяснить расчёт по артикулу: прогноз, сезонность, тренд, исключённые выбросы, упущенный спрос, страховой запас, остаток, в пути, итоговое количество.",
     {"type": "object", "properties": {"sku": {"type": "string", "description": "код артикула ровно как в вопросе пользователя, например 010300016_ (подчёркивание на конце — часть кода 1С)"}, "warehouse": {"type": "string"}}, "required": ["sku"]},
+    label="Разбор позиции",
+    summarize=_sum_explain,
 )
 def explain_sku(sku: str, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
@@ -66,6 +100,8 @@ def explain_sku(sku: str, warehouse: str | None = None) -> dict:
 @tool(
     "Список рекомендованных заказов с фильтрами по поставщику (id или название) и срочности (critical|high|normal).",
     {"type": "object", "properties": {"supplier": {"type": "string"}, "urgency": {"type": "string"}, "warehouse": {"type": "string"}, "limit": {"type": "integer", "default": 15}}, "required": []},
+    label="Поиск позиций в заказе",
+    summarize=_sum_list,
 )
 def list_orders(supplier: str | None = None, urgency: str | None = None, warehouse: str | None = None, limit: int = 15) -> dict:
     res = state.ensure_result()
@@ -82,6 +118,8 @@ def list_orders(supplier: str | None = None, urgency: str | None = None, warehou
 @tool(
     "Пересчитать позицию при изменении входных данных: товар в пути, остаток, срок поставки, уровень сервиса.",
     {"type": "object", "properties": {"sku": {"type": "string"}, "in_transit": {"type": "number"}, "stock": {"type": "number"}, "lead_time_days": {"type": "integer"}, "service_level": {"type": "number"}, "warehouse": {"type": "string"}}, "required": ["sku"]},
+    label="Пересчёт «что если»",
+    summarize=_sum_whatif,
 )
 def what_if(sku: str, in_transit: float | None = None, stock: float | None = None, lead_time_days: int | None = None, service_level: float | None = None, warehouse: str | None = None) -> dict:
     ds = state.get_ds()
@@ -102,6 +140,8 @@ def what_if(sku: str, in_transit: float | None = None, stock: float | None = Non
 @tool(
     "Черновик письма поставщику с позициями заказа. Только текст, ничего не отправляется.",
     {"type": "object", "properties": {"supplier_id": {"type": "string"}}, "required": ["supplier_id"]},
+    label="Черновик письма поставщику",
+    summarize=_sum_email,
 )
 def draft_supplier_email(supplier_id: str) -> dict:
     res = state.ensure_result()

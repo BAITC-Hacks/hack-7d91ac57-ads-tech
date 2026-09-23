@@ -1,5 +1,36 @@
 // Typed client for the backend contract (docs/API.md)
 const BASE = import.meta.env.VITE_API_URL || "";
+const TOKEN_KEY = "ekt_token";
+
+export type User = { username: string; role: "manager" | "admin" | string; name: string; role_label?: string };
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(t: string | null) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable: session lives in memory only */
+  }
+}
+
+let memToken: string | null = null;
+const token = () => memToken ?? getToken();
+
+/** fetch with the bearer token; a 401 anywhere signs the user out */
+function f(url: string, init: RequestInit = {}) {
+  const t = token();
+  const headers: Record<string, string> = { ...((init.headers as Record<string, string>) || {}) };
+  if (t) headers.Authorization = `Bearer ${t}`;
+  return fetch(url, { ...init, headers });
+}
 
 export type Urgency = "critical" | "high" | "normal" | "none";
 
@@ -158,7 +189,18 @@ export type CategoryTrends = {
   categories: { category: string; months: string[]; qty: number[]; total: number; growth_pct: number; growth_basis: string }[];
 };
 
-export type ChatStep = { tool: string; args: string; result: string; ms?: number };
+export type ChatStep = { tool: string; label?: string; summary?: string; args: string; result: string; ms?: number };
+
+export type AuditItem = { ts: string; user: string; name: string; role: string; action: string; label: string; ok: boolean; details: Record<string, unknown> };
+export type AuditResponse = { items: AuditItem[]; summary: { total: number; by_action: Record<string, number>; by_user: Record<string, number> }; actions: Record<string, string> };
+export type IntegrationState = { enabled: boolean; status: string; checked_at: string | null; message: string; [k: string]: unknown };
+export type AdminIntegrations = {
+  onec: IntegrationState & { base_url: string; username: string; password: string };
+  bitrix24: IntegrationState & { webhook_url: string; bot_name: string };
+  llm: { provider: string; model: string; demo_mode: boolean; key_configured: boolean };
+  users: { username: string; role: string; role_label: string; name: string }[];
+  bot_events_path: string;
+};
 export type DailyBrief = { brief: string; facts: Record<string, unknown>; steps: ChatStep[]; llm: boolean; generated_at: string };
 export type ChatResponse = { answer: string; steps: ChatStep[]; latency_ms: number };
 export type Msg = { role: "user" | "assistant"; content: string };
@@ -176,6 +218,7 @@ export type ApprovedOrder = {
 };
 
 async function j<T>(r: Response): Promise<T> {
+  if (r.status === 401 && !r.url.endsWith("/api/auth/login")) window.dispatchEvent(new Event("auth:expired"));
   if (!r.ok) {
     let detail = `${r.status}`;
     try {
@@ -192,45 +235,74 @@ async function j<T>(r: Response): Promise<T> {
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export const api = {
-  health: () => fetch(`${BASE}/api/health`).then((r) => j<Health>(r)),
+  health: () => f(`${BASE}/api/health`).then((r) => j<Health>(r)),
   run: (body: { warehouse?: string | null; category?: string | null; service_level?: number | null; review_days?: number; growth_plan_pct_year?: number | null; ss_calibrated?: boolean }) =>
-    fetch(`${BASE}/api/replenish/run`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<RunResult>(r)),
-  impact: () => fetch(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
+    f(`${BASE}/api/replenish/run`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<RunResult>(r)),
+  impact: () => f(`${BASE}/api/replenish/impact`).then((r) => j<Impact>(r)),
   backtest: async (): Promise<Backtest | null> => {
-    const r = await fetch(`${BASE}/api/backtest`);
+    const r = await f(`${BASE}/api/backtest`);
     if (r.status === 202) return null;
     return j<Backtest>(r);
   },
   overstock: (warehouse?: string) =>
-    fetch(`${BASE}/api/replenish/overstock${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<Overstock>(r)),
+    f(`${BASE}/api/replenish/overstock${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<Overstock>(r)),
   dailyBrief: (warehouse?: string) =>
-    fetch(`${BASE}/api/agent/daily-brief${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<DailyBrief>(r)),
-  orderEmail: (orderId: string) => fetch(`${BASE}/api/orders/${encodeURIComponent(orderId)}/email`).then((r) => j<{ to: string; subject: string; body: string }>(r)),
+    f(`${BASE}/api/agent/daily-brief${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<DailyBrief>(r)),
+  orderEmail: (orderId: string) => f(`${BASE}/api/orders/${encodeURIComponent(orderId)}/email`).then((r) => j<{ to: string; subject: string; body: string }>(r)),
   importPartner: (files: File[]) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
-    return fetch(`${BASE}/api/data/import_partner`, { method: "POST", body: fd }).then((r) => j<{ imported: Record<string, unknown>; summary: Record<string, unknown> }>(r));
+    return f(`${BASE}/api/data/import_partner`, { method: "POST", body: fd }).then((r) => j<{ imported: Record<string, unknown>; summary: Record<string, unknown> }>(r));
   },
   categories: (warehouse?: string) =>
-    fetch(`${BASE}/api/replenish/categories${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<CategoryTrends>(r)),
+    f(`${BASE}/api/replenish/categories${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<CategoryTrends>(r)),
   sku: (sku: string, warehouse?: string) =>
-    fetch(`${BASE}/api/sku/${encodeURIComponent(sku)}${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<SkuDetail>(r)),
+    f(`${BASE}/api/sku/${encodeURIComponent(sku)}${warehouse ? `?warehouse=${encodeURIComponent(warehouse)}` : ""}`).then((r) => j<SkuDetail>(r)),
   whatif: (body: { sku: string; warehouse?: string; in_transit?: number | null; stock?: number | null; lead_time_days?: number | null; service_level?: number | null }) =>
-    fetch(`${BASE}/api/replenish/whatif`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) =>
+    f(`${BASE}/api/replenish/whatif`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) =>
       j<{ base: Order; scenario: Order; overrides: Record<string, number>; delta_qty: number }>(r)
     ),
   approve: (body: { supplier_id: string; lines: { sku: string; qty: number }[]; comment: string }) =>
-    fetch(`${BASE}/api/orders/approve`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<ApprovedOrder>(r)),
-  orders: () => fetch(`${BASE}/api/orders`).then((r) => j<{ orders: ApprovedOrder[] }>(r)),
+    f(`${BASE}/api/orders/approve`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) }).then((r) => j<ApprovedOrder>(r)),
+  orders: () => f(`${BASE}/api/orders`).then((r) => j<{ orders: ApprovedOrder[] }>(r)),
   exportUrl: (format: "csv" | "xlsx", supplier?: string) =>
-    `${BASE}/api/export?format=${format}${supplier ? `&supplier=${encodeURIComponent(supplier)}` : ""}`,
+    `${BASE}/api/export?format=${format}${supplier ? `&supplier=${encodeURIComponent(supplier)}` : ""}&token=${encodeURIComponent(token() ?? "")}`,
+  login: async (username: string, password: string) => {
+    const r = await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ username, password }) });
+    const res = await j<{ token: string; user: User }>(r);
+    memToken = res.token;
+    setToken(res.token);
+    return res.user;
+  },
+  me: () => f(`${BASE}/api/auth/me`).then((r) => j<User>(r)),
+  logout: async () => {
+    try {
+      await f(`${BASE}/api/auth/logout`, { method: "POST" });
+    } finally {
+      memToken = null;
+      setToken(null);
+    }
+  },
+  adminIntegrations: () => f(`${BASE}/api/admin/integrations`).then((r) => j<AdminIntegrations>(r)),
+  saveIntegration: (name: string, patch: Record<string, unknown>) =>
+    f(`${BASE}/api/admin/integrations/${name}`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(patch) }).then((r) => j<Record<string, unknown>>(r)),
+  testIntegration: (name: string) => f(`${BASE}/api/admin/integrations/${name}/test`, { method: "POST" }).then((r) => j<{ ok: boolean; message: string; ms: number }>(r)),
+  audit: (params: { user?: string; action?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params.user) q.set("user", params.user);
+    if (params.action) q.set("action", params.action);
+    q.set("limit", String(params.limit ?? 300));
+    return f(`${BASE}/api/admin/audit?${q}`).then((r) => j<AuditResponse>(r));
+  },
+  auditCsvUrl: (params: { user?: string; action?: string }) =>
+    `${BASE}/api/admin/audit.csv?${new URLSearchParams({ ...(params.user ? { user: params.user } : {}), ...(params.action ? { action: params.action } : {}), token: token() ?? "" })}`,
   chat: (messages: Msg[]) =>
-    fetch(`${BASE}/api/chat`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ messages }) }).then((r) => j<ChatResponse>(r)),
+    f(`${BASE}/api/chat`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ messages }) }).then((r) => j<ChatResponse>(r)),
   upload: (kind: string, file: File) => {
     const fd = new FormData();
     fd.append("kind", kind);
     fd.append("file", file);
-    return fetch(`${BASE}/api/data/upload`, { method: "POST", body: fd }).then((r) => j<{ kind: string; rows: number }>(r));
+    return f(`${BASE}/api/data/upload`, { method: "POST", body: fd }).then((r) => j<{ kind: string; rows: number }>(r));
   },
 };
 

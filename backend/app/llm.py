@@ -21,7 +21,7 @@ ToolFn = Callable[..., Any | Awaitable[Any]]
 _TOOLS: dict[str, dict[str, Any]] = {}
 
 
-def tool(description: str, parameters: dict[str, Any] | None = None):
+def tool(description: str, parameters: dict[str, Any] | None = None, label: str | None = None, summarize: Callable[[Any], str] | None = None):
     """Register a python function as an LLM tool.
 
     parameters: JSON schema for the arguments. If omitted, a simple schema is
@@ -37,6 +37,8 @@ def tool(description: str, parameters: dict[str, Any] | None = None):
         }
         _TOOLS[fn.__name__] = {
             "fn": fn,
+            "label": label or fn.__name__,
+            "summarize": summarize,
             "spec": {
                 "type": "function",
                 "function": {"name": fn.__name__, "description": description, "parameters": schema},
@@ -45,6 +47,21 @@ def tool(description: str, parameters: dict[str, Any] | None = None):
         return fn
 
     return deco
+
+
+def make_step(name: str, args: str, out: str) -> dict[str, Any]:
+    """A step as shown to people: human label + short human summary, with the technical name and raw data kept."""
+    entry = _TOOLS.get(name) or {}
+    summary = ""
+    try:
+        data = json.loads(out)
+        if isinstance(data, dict) and data.get("error"):
+            summary = f"ошибка: {data['error']}"
+        elif entry.get("summarize"):
+            summary = entry["summarize"](data)
+    except Exception:  # noqa: BLE001 — a summary must never break the answer
+        summary = ""
+    return {"tool": name, "label": entry.get("label", name), "summary": summary, "args": args, "result": out[:2000]}
 
 
 def tool_specs() -> list[dict[str, Any]]:
@@ -96,13 +113,13 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
         m = re.search(r"[A-Za-z]{3}-\d{3}|\d{9}_?", user_text)
         if m and "explain_sku" in _TOOLS:
             out = await _call_tool("explain_sku", json.dumps({"sku": m.group(0).upper()}))
-            steps.append({"tool": "explain_sku", "args": json.dumps({"sku": m.group(0).upper()}), "result": out[:2000]})
+            steps.append(make_step("explain_sku", json.dumps({"sku": m.group(0).upper()}), out))
             d = json.loads(out)
             answer = "[DEMO MODE, без LLM] " + (d.get("justification") or d.get("error", ""))
             return {"answer": answer, "steps": steps, "messages": history}
         if "list_orders" in _TOOLS:
             out = await _call_tool("list_orders", json.dumps({"urgency": "critical", "limit": 5}))
-            steps.append({"tool": "list_orders", "args": json.dumps({"urgency": "critical"}), "result": out[:2000]})
+            steps.append(make_step("list_orders", json.dumps({"urgency": "critical"}), out))
             d = json.loads(out)
             rows = d.get("orders", [])
             answer = "[DEMO MODE, без LLM] Критичные позиции: " + "; ".join(f"{r['sku']} {r['name']} — {r['recommended_qty']} шт ({r['supplier']})" for r in rows) if rows else "[DEMO MODE] Критичных позиций нет."
@@ -132,6 +149,6 @@ async def run_agent(messages: list[dict[str, Any]], system: str | None = None) -
             return {"answer": msg.content or "", "steps": steps, "messages": history}
         for tc in msg.tool_calls:
             out = await _call_tool(tc.function.name, tc.function.arguments)
-            steps.append({"tool": tc.function.name, "args": tc.function.arguments, "result": out[:2000]})
+            steps.append(make_step(tc.function.name, tc.function.arguments, out))
             history.append({"role": "tool", "tool_call_id": tc.id, "content": out})
     return {"answer": "Reached max tool rounds.", "steps": steps, "messages": history}

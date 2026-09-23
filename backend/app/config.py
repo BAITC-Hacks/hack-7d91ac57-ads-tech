@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # reviewers can always run the main scenario.
     demo_mode: bool = False
 
+    # login for the UI/API (demo users in app/auth.py, AUTH_USERS to override); health and login stay public
+    auth_enabled: bool = True
+
     # Embeddings (RAG). Defaults to the LLM provider; OpenAI: text-embedding-3-small
     embed_model: str = "text-embedding-3-small"
     embed_base_url: str = ""

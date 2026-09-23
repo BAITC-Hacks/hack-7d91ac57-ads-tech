@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import state
+from . import admin as integrations
+from . import audit, auth, state
 from . import tools  # noqa: F401  (registers agent tools)
 from .config import get_settings
 from .ingest import extract_text
@@ -41,6 +42,112 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Электрокомплект · Расчёт заказов поставщикам", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_methods=["*"], allow_headers=["*"])
+
+PUBLIC_PATHS = {"/api/health", "/api/auth/login"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    """Every /api call except health and login needs a token (header «Authorization: Bearer …» or «?token=» for downloads)."""
+    path = request.url.path
+    request.state.user = None
+    if path.startswith("/api/") and path not in PUBLIC_PATHS:
+        header = request.headers.get("authorization", "")
+        token = header[7:] if header.lower().startswith("bearer ") else request.query_params.get("token")
+        user = auth.verify(token)
+        if settings.auth_enabled and not user:
+            return JSONResponse({"detail": "требуется вход в систему"}, status_code=401)
+        request.state.user = user or {"username": "anonymous", "role": "admin", "name": "без авторизации"}
+    return await call_next(request)
+
+
+def current_user(request: Request) -> dict:
+    return getattr(request.state, "user", None) or {}
+
+
+def require_admin(request: Request) -> dict:
+    u = current_user(request)
+    if u.get("role") != "admin":
+        raise HTTPException(403, "доступно только администратору")
+    return u
+
+
+# ------------------------------------------------------------------ auth
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    user = auth.authenticate(req.username, req.password)
+    if not user:
+        audit.log({"username": (req.username or "").strip().lower()[:40]}, "login_failed", ok=False)
+        raise HTTPException(401, "неверный логин или пароль")
+    audit.log(user, "login")
+    return {"token": auth.issue(user), "user": user}
+
+
+@app.get("/api/auth/me")
+def me(request: Request):
+    return current_user(request)
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request):
+    audit.log(current_user(request), "logout")
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ admin: integrations, action log, users
+@app.get("/api/admin/integrations")
+def admin_integrations(request: Request):
+    require_admin(request)
+    return {**integrations.public(), "users": auth.users_public(), "bot_events_path": "/api/integrations/bitrix24/bot"}
+
+
+class IntegrationPatch(BaseModel):
+    enabled: bool | None = None
+    base_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    webhook_url: str | None = None
+    bot_name: str | None = None
+
+
+@app.put("/api/admin/integrations/{name}")
+def admin_integration_save(name: str, patch: IntegrationPatch, request: Request):
+    u = require_admin(request)
+    try:
+        res = integrations.save(name, {k: v for k, v in patch.model_dump().items() if v is not None})
+    except KeyError as e:
+        raise HTTPException(404, f"неизвестная интеграция {name}") from e
+    audit.log(u, "integration_save", {"integration": name, "enabled": res.get("enabled")})
+    return res
+
+
+@app.post("/api/admin/integrations/{name}/test")
+async def admin_integration_test(name: str, request: Request):
+    u = require_admin(request)
+    try:
+        res = await integrations.test(name)
+    except KeyError as e:
+        raise HTTPException(404, f"неизвестная интеграция {name}") from e
+    audit.log(u, "integration_test", {"integration": name, "message": res["message"]}, ok=res["ok"])
+    return res
+
+
+@app.get("/api/admin/audit")
+def admin_audit(request: Request, limit: int = 300, user: str | None = None, action: str | None = None):
+    require_admin(request)
+    return {"items": audit.read(limit, user or None, action or None), "summary": audit.summary(), "actions": audit.ACTION_LABELS}
+
+
+@app.get("/api/admin/audit.csv")
+def admin_audit_csv(request: Request, user: str | None = None, action: str | None = None):
+    require_admin(request)
+    data = audit.to_csv(audit.read(100000, user or None, action or None)).encode("utf-8")
+    return StreamingResponse(io.BytesIO(data), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="audit-{time.strftime("%Y%m%d-%H%M")}.csv"'})
 
 
 # ------------------------------------------------------------------ health / chat
@@ -77,18 +184,22 @@ def health():
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     t0 = time.perf_counter()
     result = await run_agent([m.model_dump() for m in req.messages], system=SYSTEM_PROMPT)
+    question = next((m.content for m in reversed(req.messages) if m.role == "user"), "")
+    audit.log(current_user(request), "chat", {"question": question[:300], "tools": [s.get("label", s.get("tool")) for s in result["steps"]]})
     return ChatResponse(answer=result["answer"], steps=result["steps"], latency_ms=int((time.perf_counter() - t0) * 1000))
 
 
 @app.get("/api/agent/daily-brief")
-async def agent_daily_brief(warehouse: str | None = None):
+async def agent_daily_brief(request: Request, warehouse: str | None = None):
     """Утренний агент: сам проходит по инструментам (расчёт, критичные, избытки, данные) и готовит сводку «что сделать сегодня»."""
     from .agent import daily_brief
 
-    return await daily_brief(warehouse)
+    res = await daily_brief(warehouse)
+    audit.log(current_user(request), "daily_brief", {"llm": res["llm"], "steps": [s.get("label") for s in res["steps"]]})
+    return res
 
 
 # ------------------------------------------------------------------ data
@@ -109,7 +220,7 @@ def data_summary():
 
 
 @app.post("/api/data/upload")
-async def data_upload(kind: str = Form(...), file: UploadFile = File(...)):
+async def data_upload(request: Request, kind: str = Form(...), file: UploadFile = File(...)):
     if kind not in REQUIRED_COLUMNS:
         raise HTTPException(400, f"kind must be one of {list(REQUIRED_COLUMNS)}")
     raw = await file.read()
@@ -131,11 +242,12 @@ async def data_upload(kind: str = Form(...), file: UploadFile = File(...)):
     ds.model_wape, ds.ss_multiplier = None, 1.0
     state.invalidate()
     state.precompute_in_background()
+    audit.log(current_user(request), "upload", {"table": kind, "file": file.filename, "rows": int(len(df))})
     return {"kind": kind, "rows": int(len(df)), "summary": ds.summary()}
 
 
 @app.post("/api/data/import_partner")
-async def data_import_partner(files: list[UploadFile] = File(...)):
+async def data_import_partner(request: Request, files: list[UploadFile] = File(...)):
     """Импорт выгрузок 1С партнёра «как есть»: загрузите 12 файлов Excel (IEK и Systeme Electric).
     Файлы раскладываются по поставщику по имени, затем вызывается тот же импортёр, что и CLI."""
     import shutil
@@ -169,12 +281,14 @@ async def data_import_partner(files: list[UploadFile] = File(...)):
     state.DATA_DIR = out
     ds = state.reset_ds(regenerate=False)
     state.precompute_in_background()
+    audit.log(current_user(request), "import_partner", {"files": len(files), "products": info.get("products"), "sales_rows": info.get("sales_rows")})
     return {"imported": info, "files": saved, "summary": ds.summary()}
 
 
 @app.post("/api/data/reset")
-def data_reset():
+def data_reset(request: Request):
     ds = state.reset_ds(regenerate=False)
+    audit.log(current_user(request), "data_reset")
     return {"ok": True, "summary": ds.summary()}
 
 
@@ -202,9 +316,10 @@ def _params(req: RunRequest) -> Params:
 
 
 @app.post("/api/replenish/run")
-def replenish_run(req: RunRequest):
+def replenish_run(req: RunRequest, request: Request):
     t0 = time.perf_counter()
     res = state.ensure_result(_params(req))
+    audit.log(current_user(request), "run", {"warehouse": res["params"].get("warehouse"), "category": req.category, "service_level": req.service_level, "calibrated": req.ss_calibrated, "positions": res["summary"]["positions"], "critical": res["summary"]["critical"]})
     return {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "elapsed_ms": int((time.perf_counter() - t0) * 1000), **res}
 
 
@@ -278,7 +393,7 @@ class WhatIfRequest(BaseModel):
 
 
 @app.post("/api/replenish/whatif")
-def whatif(req: WhatIfRequest):
+def whatif(req: WhatIfRequest, request: Request):
     ds = state.get_ds()
     if req.sku not in set(ds.products["sku"]):
         raise HTTPException(404, f"unknown sku {req.sku}")
@@ -289,6 +404,7 @@ def whatif(req: WhatIfRequest):
     ov = {k: v for k, v in req.model_dump().items() if k not in ("sku", "warehouse") and v is not None}
     new = compute_sku(ds, req.sku, wh, p, overrides=ov)
     new.pop("_series", None)
+    audit.log(current_user(request), "whatif", {"sku": req.sku, "changes": ov, "from": base["recommended_qty"], "to": new["recommended_qty"]})
     return {"base": base, "scenario": new, "overrides": ov, "delta_qty": new["recommended_qty"] - base["recommended_qty"]}
 
 
@@ -306,7 +422,7 @@ class ApproveRequest(BaseModel):
 
 
 @app.post("/api/orders/approve")
-def approve(req: ApproveRequest):
+def approve(req: ApproveRequest, request: Request):
     ds = state.get_ds()
     sup = ds.suppliers.loc[ds.suppliers["supplier_id"] == req.supplier_id]
     if sup.empty:
@@ -319,10 +435,13 @@ def approve(req: ApproveRequest):
         "lines": [l.model_dump() for l in req.lines],
         "total_qty": int(sum(l.qty for l in req.lines)),
         "comment": req.comment,
-        "approved_by": req.approved_by,
+        "approved_by": current_user(request).get("name") or req.approved_by,
+        "approved_login": current_user(request).get("username"),
         "sent": False,  # never auto-sent
     }
-    return state.save_order(order)
+    saved = state.save_order(order)
+    audit.log(current_user(request), "approve", {"order_id": saved["order_id"], "supplier": saved["supplier"], "lines": len(saved["lines"]), "total_qty": saved["total_qty"]})
+    return saved
 
 
 @app.get("/api/orders")
@@ -331,7 +450,7 @@ def orders_list():
 
 
 @app.get("/api/orders/{order_id}/email")
-def order_email(order_id: str):
+def order_email(order_id: str, request: Request):
     """Черновик письма поставщику по утверждённому заказу. Ничего не отправляется."""
     order = next((o for o in state.load_orders() if o["order_id"] == order_id), None)
     if not order:
@@ -350,14 +469,16 @@ def order_email(order_id: str):
         + (f"Комментарий: {order['comment']}\n" if order.get("comment") else "")
         + "\nС уважением, отдел закупа ТОО «Электрокомплект»"
     )
+    audit.log(current_user(request), "email_draft", {"order_id": order_id, "to": email})
     return {"order_id": order_id, "to": email, "subject": f"Заказ {order['order_id']} от ТОО «Электрокомплект»", "body": text, "sent": False}
 
 
 # ------------------------------------------------------------------ export
 @app.get("/api/export")
-def export(format: str = "csv", supplier: str | None = None):
+def export(request: Request, format: str = "csv", supplier: str | None = None):
     res = state.ensure_result()
     df = export_rows(res, supplier)
+    audit.log(current_user(request), "export", {"format": format, "supplier": supplier or "все", "rows": int(len(df))})
     stamp = time.strftime("%Y%m%d-%H%M")
     if format == "xlsx":
         buf = io.BytesIO()

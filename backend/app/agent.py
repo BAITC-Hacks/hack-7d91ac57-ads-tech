@@ -23,7 +23,7 @@ def collect_facts(warehouse: str | None = None) -> tuple[dict[str, Any], list[di
 
     t0 = time.perf_counter()
     res = state.ensure_result(Params(warehouse=wh))
-    steps.append({"tool": "run_replenishment", "args": f'{{"warehouse":"{wh}"}}', "result": f"{res['summary']['positions']} позиций, {res['summary']['critical']} критичных", "ms": int((time.perf_counter() - t0) * 1000)})
+    steps.append({"tool": "run_replenishment", "label": "Расчёт заказов", "args": f'{{"warehouse":"{wh}"}}', "result": f"{res['summary']['positions']} позиций, {res['summary']['critical']} критичных", "ms": int((time.perf_counter() - t0) * 1000)})
 
     t0 = time.perf_counter()
     orders = res["orders"]
@@ -31,19 +31,19 @@ def collect_facts(warehouse: str | None = None) -> tuple[dict[str, Any], list[di
     due_week = [o for o in orders if o.get("order_by") and date.fromisoformat(o["order_by"]) <= week]
     critical = [o for o in orders if o["urgency"] == "critical"]
     zero_stock = [o for o in critical if o["stock"] <= 0 and o["in_transit"] <= 0]
-    steps.append({"tool": "list_orders", "args": '{"urgency":"critical"}', "result": f"{len(critical)} критичных, из них {len(zero_stock)} с нулевым остатком; заказать на этой неделе: {len(due_week)}", "ms": int((time.perf_counter() - t0) * 1000)})
+    steps.append({"tool": "list_orders", "label": "Поиск критичных позиций", "args": '{"urgency":"critical"}', "result": f"{len(critical)} критичных, из них {len(zero_stock)} с нулевым остатком; заказать на этой неделе: {len(due_week)}", "ms": int((time.perf_counter() - t0) * 1000)})
 
     t0 = time.perf_counter()
     full = state.full_result(Params(warehouse=wh))
     over = overstock(ds, wh, 6.0, full=full)
-    steps.append({"tool": "overstock_report", "args": '{"months":6}', "result": f"{over['overstock_positions']} поз. избытка, {over['dead_positions']} без продаж 6 мес.", "ms": int((time.perf_counter() - t0) * 1000)})
+    steps.append({"tool": "overstock_report", "label": "Отчёт об избытках", "args": '{"months":6}', "result": f"{over['overstock_positions']} поз. избытка, {over['dead_positions']} без продаж 6 мес.", "ms": int((time.perf_counter() - t0) * 1000)})
 
     t0 = time.perf_counter()
     late_transit = 0
     if len(ds.in_transit):
         late_transit = int((ds.in_transit["eta"].dt.date < today).sum())
     approved = state.load_orders()
-    steps.append({"tool": "check_data", "args": "{}", "result": f"в пути с просроченной датой: {late_transit}; утверждённых заказов: {len(approved)}", "ms": int((time.perf_counter() - t0) * 1000)})
+    steps.append({"tool": "check_data", "label": "Проверка данных", "args": "{}", "result": f"в пути с просроченной датой: {late_transit}; утверждённых заказов: {len(approved)}", "ms": int((time.perf_counter() - t0) * 1000)})
 
     suppliers = [{"supplier": s["supplier"], "supplier_id": s["supplier_id"], "positions": s["positions"], "total_qty": s["total_qty"], "total_value": s.get("total_value", 0), "critical": s["critical"], "lead_time_days": s["lead_time_days"]} for s in res["suppliers"]]
     facts = {
@@ -102,7 +102,9 @@ async def daily_brief(warehouse: str | None = None) -> dict[str, Any]:
                 # LLM adds a short prioritised summary; the factual brief below stays verbatim from the tools
                 text = "Главное сегодня (сформулировано LLM по фактам ниже):\n" + out.strip() + "\n\n———\n" + text
                 used_llm = True
-            steps.append({"tool": "write_brief (LLM)", "args": f'{{"model":"{s.llm_model}"}}', "result": text[:200], "ms": int((time.perf_counter() - t0) * 1000)})
+            steps.append({"tool": "write_brief", "label": "Приоритеты дня текстом (LLM)", "args": f'{{"model":"{s.llm_model}"}}', "result": text[:200], "ms": int((time.perf_counter() - t0) * 1000)})
         except Exception as e:  # noqa: BLE001
-            steps.append({"tool": "write_brief (LLM)", "args": "{}", "result": f"LLM недоступен: {e}; использован шаблон", "ms": 0})
+            steps.append({"tool": "write_brief", "label": "Приоритеты дня текстом (LLM)", "args": "{}", "result": f"LLM недоступен: {e}; использован шаблон", "ms": 0})
+    for st in steps:
+        st.setdefault("summary", st.get("result", ""))
     return {"brief": text, "facts": facts, "steps": steps, "llm": used_llm, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
