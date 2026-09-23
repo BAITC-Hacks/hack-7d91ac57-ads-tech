@@ -4,9 +4,8 @@
 
 | Инструмент | Для чего | Примеры (коммиты/файлы) |
 |---|---|---|
-| OpenAI Codex | <генерация фронтенда / тестов / рефакторинг> | <хеши коммитов> |
-| Claude Code | <планирование, backend, README> | <хеши коммитов> |
-| ChatGPT | <генерация тестовых данных, тексты> | <файлы в data/> |
+| Claude Code | план (docs/PLAN.md), движок `backend/app/replenish.py`, генератор данных, API, тесты must-have, README, контракт API | коммиты `docs:`, `feat(engine)`, `feat(api)`, `fix(engine)` |
+| OpenAI Codex | фронтенд `frontend/**` по docs/API.md | коммиты `feat(ui)`, `fix(ui)` |
 
 Модели в рантайме продукта: см. THIRD_PARTY.md.
 Весь сгенерированный код проверен и протестирован участниками команды.
