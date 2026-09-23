@@ -17,6 +17,7 @@ _ds: Dataset | None = None
 _last: dict[str, Any] | None = None
 _last_params: Params | None = None
 _cache: dict[tuple, dict[str, Any]] = {}
+_backtest: dict[str, Any] | None = None
 _lock = threading.Lock()
 
 
@@ -39,7 +40,8 @@ def get_ds() -> Dataset:
 
 
 def reset_ds(regenerate: bool = False) -> Dataset:
-    global _ds, _last
+    global _ds, _last, _backtest
+    _backtest = None
     if regenerate:
         from .synth import generate
 
@@ -81,10 +83,60 @@ def full_result(params: Params) -> dict[str, Any]:
         return _cache[key]
 
 
+def _fingerprint(ds: Dataset) -> str:
+    lt = sorted(zip(ds.suppliers["supplier_id"].astype(str), ds.suppliers["lead_time_days"].astype(int)))
+    return f"{len(ds.sales)}|{float(ds.sales['qty'].sum()):.0f}|{ds.sales['date'].max()}|{len(ds.stockouts)}|{ds.today}|{lt}"
+
+
+def ensure_backtest() -> dict[str, Any]:
+    """Out-of-sample backtest (app.backtest.evaluate): gives per-SKU forecast error and the calibrated safety-stock
+    multiplier used in production. Cached on disk by a data fingerprint (partner data: ~80 s the first time)."""
+    global _backtest
+    from .backtest import evaluate
+
+    ds = get_ds()
+    path = Path("data") / f"backtest_{DATA_DIR.name}.json"
+    fp = _fingerprint(ds)
+    rep = None
+    if path.exists():
+        try:
+            cached = json.loads(path.read_text())
+            if cached.get("fingerprint") == fp:
+                rep = cached
+        except (json.JSONDecodeError, OSError):
+            rep = None
+    if rep is None:
+        rep = evaluate(ds)
+        rep["fingerprint"] = fp
+        try:
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(json.dumps(rep, ensure_ascii=False))
+        except OSError:
+            pass
+    with _lock:
+        ds.model_choice = None
+        ds.model_wape = rep["production"]["wape"]
+        ds.ss_multiplier = float(rep["production"]["ss_multiplier"])
+        _cache.clear()
+    _backtest = {k: v for k, v in rep.items() if k not in ("production", "fingerprint")}
+    _backtest["production"] = {"model": rep["production"].get("model", "trend"), "ss_multiplier": rep["production"]["ss_multiplier"], "skus_with_error": len(rep["production"]["wape"])}
+    return _backtest
+
+
+def backtest_report() -> dict[str, Any] | None:
+    return _backtest
+
+
 def precompute_in_background() -> None:
-    """Warm the default calculation at startup so the first UI request is instant (partner data: ~40 s)."""
+    """At startup: backtest (per-SKU error, safety-stock calibration), then warm the default calculation."""
 
     def _job():
+        try:
+            ensure_backtest()
+        except Exception:  # noqa: BLE001 — never block the calculation on the backtest
+            import logging
+
+            logging.getLogger("state").exception("backtest failed; using uncalibrated safety stock")
         try:
             wh = get_ds().default_warehouse()
             ensure_result(Params(warehouse=wh))

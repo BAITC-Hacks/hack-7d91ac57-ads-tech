@@ -27,8 +27,20 @@ import numpy as np
 import pandas as pd
 
 Z = {0.9: 1.2816, 0.95: 1.6449, 0.98: 2.0537, 0.99: 2.3263}
+FORECAST_MODELS = {
+    "trend": "сезонность + тренд",
+    "recent": "сезонность + уровень последних 3 мес.",
+    "year": "сезонность + средний уровень 12 мес.",
+}
 MONTHS_RU = {1: "январь", 2: "февраль", 3: "март", 4: "апрель", 5: "май", 6: "июнь", 7: "июль", 8: "август", 9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь"}
 CATEGORY_SERVICE_LEVEL = {"Автоматика": 0.98, "Кабель": 0.95, "Освещение": 0.95, "Розетки и выключатели": 0.95, "Щиты и корпуса": 0.9, "Инструмент": 0.9}
+
+
+def confidence_label(wape: float | None) -> str:
+    """Forecast reliability from the SKU's out-of-sample backtest error."""
+    if wape is None:
+        return "нет данных"
+    return "высокая" if wape <= 25 else "средняя" if wape <= 50 else "низкая"
 
 
 def z_for(sl: float) -> float:
@@ -87,6 +99,10 @@ class Dataset:
         self._groups = None
 
     _groups: dict | None = None
+    # per-SKU forecast model chosen by backtest (app.backtest), and the calibrated safety-stock multiplier
+    model_choice: dict | None = None
+    model_wape: dict | None = None
+    ss_multiplier: float = 1.0
 
     def tx(self, sku: str, warehouse: str) -> pd.DataFrame:
         """Transactions for one SKU/warehouse, from a cached groupby (2 700 SKUs × 250 k rows otherwise)."""
@@ -302,11 +318,23 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     # drop trailing partial month
     if len(monthly) and (end.day < calendar.monthrange(end.year, end.month)[1] - 1):
         monthly = monthly.iloc[:-1]
-    idx, level, growth_hist, r2 = seasonal_and_trend(monthly)
+    idx, level_trend, growth_hist, r2 = seasonal_and_trend(monthly)
+    # alternative level estimates on the same cleaned, deseasonalized series; the choice per SKU comes from backtest
+    if len(monthly):
+        deseas = np.nan_to_num(monthly.values.astype(float)) / np.array([idx[pp.month] for pp in monthly.index])
+        level_recent = float(np.mean(deseas[-3:])) if len(deseas) >= 3 else level_trend
+        level_year = float(np.mean(deseas[-12:])) if len(deseas) >= 12 else level_recent
+    else:
+        level_recent = level_year = level_trend
+    choice = (ds.model_choice or {}).get(sku, "trend")
+    if choice not in FORECAST_MODELS:
+        choice = "trend"
+    level = {"trend": level_trend, "recent": level_recent, "year": level_year}[choice]
+    growth_used = growth_hist if choice == "trend" else 0.0
     level *= lost_uplift
     plan_year = float(prod.get("growth_plan_pct_year", 0) or 0) + float(p.growth_plan_pct_year or 0)
     plan_month = plan_year / 100 / 12
-    growth = growth_hist + plan_month
+    growth = growth_used + plan_month
     last_month = monthly.index[-1] if len(monthly) else pd.Period(end, freq="M")
     fc_total, fc_parts = forecast_horizon(ds.today, horizon, level, growth, idx, last_month)
     fc_daily = fc_total / horizon if horizon else 0.0
@@ -317,7 +345,8 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     weekly = weekly / np.array([idx[ts.month] for ts in weekly.index])
     sigma_week = float(np.nan_to_num(weekly.std())) if len(weekly) > 2 else 0.0
     sigma = sigma_week / math.sqrt(7)
-    safety = z_for(sl) * sigma_week * math.sqrt(horizon / 7)
+    ss_mult = float(ds.ss_multiplier or 1.0)
+    safety = z_for(sl) * sigma_week * math.sqrt(horizon / 7) * ss_mult
 
     stock_row = ds.stock[(ds.stock["sku"] == sku) & (ds.stock["warehouse"] == warehouse)]
     stock = float(overrides["stock"]) if overrides.get("stock") is not None else (float(stock_row["stock"].iloc[0]) if len(stock_row) else 0.0)
@@ -359,8 +388,13 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     parts_txt.append(f"Регулярный спрос ≈ {_fmt(level / 30)} шт/день (очищенный, десезонализированный)")
     if abs(season_now - 1) >= 0.03:
         parts_txt.append(f"сезонный коэффициент ({MONTHS_RU[ds.today.month]}) {_fmt(season_now, 2)}")
-    if growth_hist:
+    wapes = (ds.model_wape or {}).get(sku) or {}
+    if choice != "trend":
+        parts_txt.append(f"модель прогноза «{FORECAST_MODELS[choice]}» выбрана бэктестом")
+    if growth_hist and choice == "trend":
         parts_txt.append(f"устойчивый тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес (R²={_fmt(r2, 2)})")
+    elif growth_hist:
+        parts_txt.append(f"тренд {'+' if growth_hist > 0 else ''}{_fmt(growth_hist * 100)}%/мес не экстраполируется: на бэктесте точнее выбранная модель")
     if plan_month:
         parts_txt.append(f"план прироста {'+' if plan_month > 0 else ''}{_fmt(plan_month * 1200, 0)}%/год")
     parts_txt.append(f"→ прогноз {_fmt(fc_daily)} шт/день, на {horizon} дн. (поставка {lead} + период {review}) = {_fmt(fc_total, 0)} шт")
@@ -368,7 +402,9 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         parts_txt.append(f"исключено {len(outliers)} разовых продаж на {_fmt(sum(o['qty'] for o in outliers), 0)} шт ({outliers[0]['reason']})")
     if lost:
         parts_txt.append(f"в {stockout_days} дн. дефицита учтён упущенный спрос {_fmt(lost, 0)} шт" + (f" (+{_fmt((lost_uplift - 1) * 100)}% к уровню за год)" if lost_uplift > 1.001 else ""))
-    parts_txt.append(f"страховой запас {_fmt(safety, 0)} шт (уровень сервиса {int(sl * 100)}%)")
+    parts_txt.append(f"страховой запас {_fmt(safety, 0)} шт (уровень сервиса {int(sl * 100)}%" + (f", калибровка по бэктесту ×{_fmt(ss_mult, 2)}" if abs(ss_mult - 1) > 1e-9 else "") + ")")
+    if wapes.get(choice) is not None:
+        parts_txt.append(f"ошибка прогноза этого артикула на бэктесте {_fmt(wapes[choice], 0)}% (надёжность: {confidence_label(wapes[choice])})")
     parts_txt.append(f"остаток {_fmt(stock, 0)}, в пути {_fmt(in_transit, 0)}")
     if rec > 0:
         tail = f"→ потребность {_fmt(raw_need, 0)}"
@@ -411,6 +447,13 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
         "sigma_daily": round(sigma, 2),
         "seasonal_factor": round(season_now, 3),
         "trend_pct_month": round(growth_hist * 100, 2),
+        "trend_used": bool(choice == "trend" and growth_hist),
+        "forecast_model": choice,
+        "forecast_model_label": FORECAST_MODELS[choice],
+        "model_backtest_wape": wapes or None,
+        "forecast_wape": wapes.get(choice),
+        "forecast_confidence": confidence_label(wapes.get(choice)),
+        "ss_multiplier": round(ss_mult, 2),
         "trend_r2": round(r2, 2),
         "plan_pct_year": round(plan_month * 1200, 1),
         "stockout_days": stockout_days,
@@ -429,6 +472,13 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
             "level": level,
             "growth": growth,
             "last_month": last_month,
+            "level_trend": level_trend,
+            "level_recent": level_recent,
+            "level_year": level_year,
+            "lost_uplift": lost_uplift,
+            "growth_hist": growth_hist,
+            "plan_month": plan_month,
+            "choice": choice,
         },
     }
 

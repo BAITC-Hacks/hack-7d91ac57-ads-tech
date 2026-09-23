@@ -71,6 +71,7 @@ def health():
         "tools": [t["function"]["name"] for t in tool_specs()],
         "data": state.get_ds().summary(),
         "calculation_ready": state.last_result() is not None,
+        "backtest_ready": state.backtest_report() is not None,
     }
 
 
@@ -126,7 +127,9 @@ async def data_upload(kind: str = Form(...), file: UploadFile = File(...)):
     ds.replace(kind, df)
     if kind == "sales":
         ds.today = (df["date"].max() + pd.Timedelta(days=1)).date()
+    ds.model_wape, ds.ss_multiplier = None, 1.0
     state.invalidate()
+    state.precompute_in_background()
     return {"kind": kind, "rows": int(len(df)), "summary": ds.summary()}
 
 
@@ -223,6 +226,17 @@ def replenish_impact():
     res = state.ensure_result()
     full = state.full_result(Params(**{k: v for k, v in res["params"].items() if k != "include_zero"}))
     return impact(state.get_ds(), res, full)
+
+
+@app.get("/api/backtest")
+def backtest():
+    """Точность прогноза вне выборки: сравнение с Excel и другими методами, калибровка страхового запаса."""
+    rep = state.backtest_report()
+    if rep is None:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"status": "computing"}, status_code=202)
+    return rep
 
 
 @app.get("/api/replenish/overstock")
