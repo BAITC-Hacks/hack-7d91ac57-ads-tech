@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import calendar
 import math
+import multiprocessing
+import os
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -416,7 +418,21 @@ def compute_sku(ds: Dataset, sku: str, warehouse: str, p: Params, overrides: dic
     }
 
 
+_POOL_DS: Dataset | None = None  # dataset shared with forked workers
+
+
+def _compute_batch(args: tuple[list[str], str, Params]) -> list[dict[str, Any]]:
+    skus, wh, p = args
+    out = []
+    for sku in skus:
+        r = compute_sku(_POOL_DS, sku, wh, p)  # type: ignore[arg-type]
+        r.pop("_series", None)
+        out.append(r)
+    return out
+
+
 def run(ds: Dataset, p: Params) -> dict[str, Any]:
+    global _POOL_DS
     prods = ds.products
     if p.category:
         prods = prods[prods["category"] == p.category]
@@ -424,11 +440,30 @@ def run(ds: Dataset, p: Params) -> dict[str, Any]:
     rows = []
     for wh in warehouses:
         skus_here = set(ds.stock.loc[ds.stock["warehouse"] == wh, "sku"]) | set(ds.sales.loc[ds.sales["warehouse"] == wh, "sku"])
-        for sku in prods["sku"]:
-            if sku not in skus_here:
-                continue
-            r = compute_sku(ds, sku, wh, p)
-            r.pop("_series", None)
+        todo = [sku for sku in prods["sku"] if sku in skus_here]
+        results: list[dict[str, Any]] = []
+        n_workers = min(os.cpu_count() or 1, 8)
+        if len(todo) >= 300 and n_workers > 1 and os.name == "posix":
+            # fork-based pool: workers inherit the dataset (and its groupby cache) copy-on-write
+            try:
+                ds.tx(todo[0], wh)  # build the cache before forking
+                _POOL_DS = ds
+                ctx = multiprocessing.get_context("fork")
+                chunk = max(50, len(todo) // (n_workers * 4))
+                batches = [(todo[i : i + chunk], wh, p) for i in range(0, len(todo), chunk)]
+                with ctx.Pool(processes=n_workers) as pool:
+                    for part in pool.imap(_compute_batch, batches):
+                        results.extend(part)
+            except Exception:  # noqa: BLE001 — fall back to serial computation
+                results = []
+            finally:
+                _POOL_DS = None
+        if not results:
+            for sku in todo:
+                r = compute_sku(ds, sku, wh, p)
+                r.pop("_series", None)
+                results.append(r)
+        for r in results:
             if r["recommended_qty"] > 0 or p.include_zero:
                 rows.append(r)
     order = {"critical": 0, "high": 1, "normal": 2, "none": 3}
