@@ -51,6 +51,9 @@ Base URL в dev: `/api` (Vite проксирует на `http://localhost:8000`)
  "note":"...","top":[{"sku":"KBL-001","name":"...","supplier":"...","naive_qty":900,"recommended_qty":600,"diff_qty":300,"diff_money":150000,"reason":"выброс|дефицит|сезон/тренд/страховой"}]}
 ```
 
+## GET /api/agent/daily-brief?warehouse=…
+Утренний агент-закупщик: `{brief: "текст сводки", facts: {...}, steps: [{tool,args,result,ms}], llm: bool, generated_at}`. Без LLM — шаблон по фактам инструментов; с LLM — живой текст.
+
 ## Дополнения (14:30)
 - `POST /api/replenish/run` принимает `growth_plan_pct_year` (плановый прирост, %/год, ко всем позициям). Строки заказа теперь содержат `order_by` (дата, до которой разместить заказ), `stockout_date`, `order_value` (₸ по себестоимости, 0 если неизвестна), `unit_price`; сводка и группы поставщиков — `total_value`, `value_known_positions`.
 - `GET /api/replenish/overstock?warehouse=…&months=6` → `{overstock_positions, overstock_units, overstock_value, dead_positions, dead_units, dead_value, note, overstock:[{sku,name,category,supplier,stock,in_transit,forecast_daily,months_of_cover,excess_units,excess_value}], dead:[{sku,name,category,supplier,stock,value,last_sale_months}]}`.

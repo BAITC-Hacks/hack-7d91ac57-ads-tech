@@ -81,6 +81,14 @@ async def chat(req: ChatRequest):
     return ChatResponse(answer=result["answer"], steps=result["steps"], latency_ms=int((time.perf_counter() - t0) * 1000))
 
 
+@app.get("/api/agent/daily-brief")
+async def agent_daily_brief(warehouse: str | None = None):
+    """Утренний агент: сам проходит по инструментам (расчёт, критичные, избытки, данные) и готовит сводку «что сделать сегодня»."""
+    from .agent import daily_brief
+
+    return await daily_brief(warehouse)
+
+
 # ------------------------------------------------------------------ data
 REQUIRED_COLUMNS = {
     "sales": ["date", "sku", "qty", "client_id", "price", "warehouse"],
