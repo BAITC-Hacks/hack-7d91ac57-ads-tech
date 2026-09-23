@@ -19,6 +19,8 @@ bash scripts/verify.sh          # health → расчёт → объяснени
 | Дашборд (данные партнёра) | Карточка артикула | Ассистент |
 |---|---|---|
 | ![Дашборд](docs/screenshot.png) | ![Артикул](docs/screenshot-sku.png) | ![Ассистент](docs/screenshot-assistant.png) |
+| **Точность прогноза (бэктест)** | **Избытки и мёртвый запас** | **Сравнение с Excel** |
+| ![Точность](docs/screenshot-accuracy.png) | ![Избытки](docs/screenshot-overstock.png) | ![Против Excel](docs/screenshot-impact.png) |
 
 Без Docker: см. [раздел 7](#7-запуск). С ключом OpenAI (`DEMO_MODE=false`) ассистент отвечает на свободные вопросы; без ключа он тоже работает, но по шаблонам.
 
