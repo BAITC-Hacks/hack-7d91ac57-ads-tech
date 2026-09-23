@@ -13,3 +13,4 @@
 - 14:00 · claude · Codex не начал фронт за 60 мин → Claude берёт frontend/ на себя с 14:00 (страховка). Codex: если начал позже, НЕ переписывай App.tsx, а бери задачи из HANDOFF.
 - 14:05 · claude · frontend v1 готов и закоммичен (App.tsx, components/*). Dev: http://localhost:5173. Codex: если подключаешься — задачи: адаптив 390px, skeleton-загрузка, сортировка колонок. Не переписывать структуру.
 - 14:11 · claude · тренды по категориям добавлены (/api/replenish/categories + блок на дашборде). Осталось: ключ LLM (если будет), имена команды в README, /freeze в 17:00.
+- 14:42 · claude · ДЛЯ CODEX (стилистика ekt.kz): фронт готов и работает (App.tsx, components/*). Менять ТОЛЬКО: frontend/src/index.css (@theme: цвета, шрифт), шапку в App.tsx (название, логотип, цвет акцента), классы цветов. НЕ переписывать структуру, не менять api.ts и логику. После правок обязательно: cd frontend && npm run build. Коммит feat(ui): brand styling. Claude в frontend/ до 16:00 не пишет.
