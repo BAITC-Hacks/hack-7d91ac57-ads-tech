@@ -14,6 +14,6 @@ echo "[4/5] what-if: +300 в пути по LMP-012"
 curl -sf -X POST "$BASE/api/replenish/whatif" -H "$J" -d '{"sku":"LMP-012","in_transit":300}' | py "print('  base', d['base']['recommended_qty'], '-> scenario', d['scenario']['recommended_qty'], '| delta', d['delta_qty'])"
 echo "[5/5] ассистент + экспорт"
 curl -sf -X POST "$BASE/api/chat" -H "$J" -d '{"messages":[{"role":"user","content":"Почему по LMP-012 такое количество?"}]}' | py "print('  tool:', [s['tool'] for s in d['steps']], '| latency_ms', d['latency_ms']); print('  ', d['answer'][:160], '...')"
-curl -sf "$BASE/api/export?format=csv" | head -2 | cut -c1-120
+curl -sf "$BASE/api/export?format=csv" | sed -n '1,2p' | python3 -c "import sys; [print('  ' + l.strip()[:110]) for l in sys.stdin]"
 curl -sf -o /dev/null -w "  xlsx HTTP %{http_code}, %{size_download} bytes\n" "$BASE/api/export?format=xlsx"
 echo "OK"
